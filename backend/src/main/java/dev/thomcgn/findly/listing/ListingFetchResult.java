@@ -4,10 +4,8 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public record ListingFetchResult(
-        String title,
-        String description,
-        BigDecimal price,
-        String currency,
-        List<String> imageUrls
-) {
+    String title, String description, BigDecimal price, String currency, List<String> imageUrls) {
+  public ListingFetchResult {
+    imageUrls = imageUrls == null ? List.of() : List.copyOf(imageUrls);
+  }
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { analyzeOffer } from "@/lib/api/analysis";
@@ -170,11 +171,16 @@ function DecisionResultCard({ result }: { result: DecisionResult }) {
 
         {result.imageUrl ? (
           <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-            <img
-              src={result.imageUrl}
-              alt={result.headline}
-              className="h-64 w-full object-cover"
-            />
+            <div className="relative h-64 w-full">
+              <Image
+                src={result.imageUrl}
+                alt={result.headline}
+                fill
+                className="object-cover"
+                sizes="(max-width: 768px) 100vw, 1200px"
+                unoptimized
+              />
+            </div>
           </div>
         ) : null}
 

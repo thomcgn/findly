@@ -12,16 +12,15 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
-
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.UUID;
 
 @Entity
 @Table(name = "price_source")
@@ -32,35 +31,35 @@ import java.util.UUID;
 @Builder
 public class PriceSource {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "analysis_id", nullable = false)
-    private Analysis analysis;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "analysis_id", nullable = false)
+  private Analysis analysis;
 
-    @Column(name = "source_name", nullable = false)
-    private String sourceName;
+  @Column(name = "source_name", nullable = false)
+  private String sourceName;
 
-    @Column(name = "product_title", nullable = false)
-    private String productTitle;
+  @Column(name = "product_title", nullable = false)
+  private String productTitle;
 
-    @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal price;
+  @Column(nullable = false, precision = 10, scale = 2)
+  private BigDecimal price;
 
-    @Column(nullable = false, length = 10)
-    private String currency;
+  @Column(nullable = false, length = 10)
+  private String currency;
 
-    @Column(nullable = false, length = 2048)
-    private String url;
+  @Column(nullable = false, length = 2048)
+  private String url;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    @Builder.Default
-    private PriceSourceCondition condition = PriceSourceCondition.UNKNOWN;
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
+  @Builder.Default
+  private PriceSourceCondition condition = PriceSourceCondition.UNKNOWN;
 
-    @CreationTimestamp
-    @Column(nullable = false, updatable = false)
-    private Instant createdAt;
+  @CreationTimestamp
+  @Column(nullable = false, updatable = false)
+  private Instant createdAt;
 }

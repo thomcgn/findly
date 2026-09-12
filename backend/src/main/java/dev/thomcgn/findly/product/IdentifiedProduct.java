@@ -10,14 +10,13 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-
-import java.math.BigDecimal;
-import java.util.UUID;
 
 @Entity
 @Table(name = "identified_product")
@@ -28,29 +27,28 @@ import java.util.UUID;
 @Builder
 public class IdentifiedProduct {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  private UUID id;
 
-    @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "analysis_id", nullable = false, unique = true)
-    private Analysis analysis;
+  @OneToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "analysis_id", nullable = false, unique = true)
+  private Analysis analysis;
 
-    @Column(nullable = false)
-    private String brand;
+  @Column(nullable = false)
+  private String brand;
 
-    @Column(nullable = false)
-    private String name;
+  @Column(nullable = false)
+  private String name;
 
-    @Column
-    private String model;
+  @Column private String model;
 
-    @Column(name = "model_number")
-    private String modelNumber;
+  @Column(name = "model_number")
+  private String modelNumber;
 
-    @Column(nullable = false)
-    private String category;
+  @Column(nullable = false)
+  private String category;
 
-    @Column(nullable = false, precision = 5, scale = 2)
-    private BigDecimal confidence;
+  @Column(nullable = false, precision = 5, scale = 2)
+  private BigDecimal confidence;
 }
