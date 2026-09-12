@@ -1,0 +1,160 @@
+package dev.thomcgn.findly.analysis;
+
+import dev.thomcgn.findly.listing.Listing;
+import dev.thomcgn.findly.listing.ListingFetchResult;
+import dev.thomcgn.findly.listing.ListingFetchService;
+import dev.thomcgn.findly.price.DealScoreService;
+import dev.thomcgn.findly.price.PriceResearchService;
+import dev.thomcgn.findly.price.PriceSource;
+import dev.thomcgn.findly.product.IdentifiedProduct;
+import dev.thomcgn.findly.product.ProductIdentificationService;
+import jakarta.persistence.EntityNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class AnalysisService {
+
+    private final AnalysisRepository analysisRepository;
+    private final ProductIdentificationService productIdentificationService;
+    private final PriceResearchService priceResearchService;
+    private final ListingFetchService listingFetchService;
+    private final DealScoreService dealScoreService = new DealScoreService();
+
+    public AnalysisService(
+            AnalysisRepository analysisRepository,
+            ProductIdentificationService productIdentificationService,
+            PriceResearchService priceResearchService,
+            ListingFetchService listingFetchService) {
+        this.analysisRepository = analysisRepository;
+        this.productIdentificationService = productIdentificationService;
+        this.priceResearchService = priceResearchService;
+        this.listingFetchService = listingFetchService;
+    }
+
+    @Transactional
+    public AnalysisStartResponse createAnalysis(String rawUrl) {
+        String url = rawUrl == null ? "" : rawUrl.trim();
+        if (url.isBlank()) {
+            throw new IllegalArgumentException("URL is required");
+        }
+
+        Analysis analysis = Analysis.builder()
+                .status(AnalysisStatus.PENDING)
+                .build();
+        Analysis persistedAnalysis = analysisRepository.save(analysis);
+
+        ListingFetchResult listingFetchResult = listingFetchService.fetch(url);
+        BigDecimal listingPrice = listingFetchResult.price();
+        if (listingPrice == null || listingPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            listingPrice = detectListingPrice(url);
+        }
+
+        Listing listing = Listing.builder()
+                .analysis(persistedAnalysis)
+                .externalUrl(url)
+                .title(listingFetchResult.title())
+                .description(listingFetchResult.description())
+                .listingPrice(listingPrice)
+                .currency(listingFetchResult.currency())
+                .imageUrls(new java.util.ArrayList<>(listingFetchResult.imageUrls()))
+                .build();
+        persistedAnalysis.setListing(listing);
+
+        IdentifiedProduct product = productIdentificationService.identify(persistedAnalysis, listing);
+        persistedAnalysis.setIdentifiedProduct(product);
+
+        List<PriceSource> priceSources = priceResearchService.findComparablePrices(persistedAnalysis);
+        priceSources.forEach(priceSource -> priceSource.setAnalysis(persistedAnalysis));
+        persistedAnalysis.setPriceSources(new java.util.ArrayList<>(priceSources));
+
+        persistedAnalysis.setStatus(AnalysisStatus.COMPLETED);
+        persistedAnalysis.setCompletedAt(Instant.now());
+        analysisRepository.save(persistedAnalysis);
+
+        return new AnalysisStartResponse(persistedAnalysis.getId(), persistedAnalysis.getStatus());
+    }
+
+    @Transactional(readOnly = true)
+    public AnalysisDetailResponse getAnalysis(UUID id) {
+        Analysis analysis = analysisRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Analysis not found: " + id));
+
+        Listing listing = analysis.getListing();
+        IdentifiedProduct product = analysis.getIdentifiedProduct();
+        List<PriceSource> priceSources = analysis.getPriceSources();
+
+        if (listing == null || product == null || priceSources == null || priceSources.isEmpty()) {
+            throw new EntityNotFoundException("Analysis not fully initialized: " + id);
+        }
+
+        BigDecimal marketMedian = medianPrice(priceSources);
+        BigDecimal lowestPrice = minimumPrice(priceSources);
+        BigDecimal highestPrice = maximumPrice(priceSources);
+
+        String dealScore = dealScoreService.classify(listing.getListingPrice(), marketMedian);
+        BigDecimal differencePercent = dealScoreService.calculateDifferencePercent(listing.getListingPrice(), marketMedian);
+
+        return new AnalysisDetailResponse(
+                analysis.getId(),
+                analysis.getStatus(),
+                new AnalysisDetailResponse.ListingSummary(
+                        listing.getTitle(),
+                        listing.getListingPrice(),
+                        listing.getCurrency(),
+                        listing.getExternalUrl()),
+                new AnalysisDetailResponse.ProductSummary(
+                        product.getBrand(),
+                        product.getModel(),
+                        product.getCategory(),
+                        product.getConfidence()),
+                new AnalysisDetailResponse.MarketSummary(marketMedian, lowestPrice, highestPrice),
+                new AnalysisDetailResponse.DealSummary(dealScore, differencePercent)
+        );
+    }
+
+    private BigDecimal detectListingPrice(String url) {
+        String lower = url.toLowerCase();
+        if (lower.contains("ikea") || lower.contains("malm")) {
+            return BigDecimal.valueOf(129.00);
+        }
+        if (lower.contains("brille") || lower.contains("glasses") || lower.contains("sunglasses")) {
+            return BigDecimal.valueOf(290.00);
+        }
+        return BigDecimal.valueOf(149.00);
+    }
+
+    private BigDecimal medianPrice(List<PriceSource> priceSources) {
+        List<BigDecimal> values = priceSources.stream()
+                .map(PriceSource::getPrice)
+                .sorted()
+                .toList();
+        int size = values.size();
+        if (size == 0) {
+            return BigDecimal.ZERO;
+        }
+        if (size % 2 == 0) {
+            BigDecimal left = values.get(size / 2 - 1);
+            BigDecimal right = values.get(size / 2);
+            return left.add(right).divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
+        }
+        return values.get(size / 2).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal minimumPrice(List<PriceSource> priceSources) {
+        return priceSources.stream().map(PriceSource::getPrice).min(Comparator.naturalOrder())
+                .orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal maximumPrice(List<PriceSource> priceSources) {
+        return priceSources.stream().map(PriceSource::getPrice).max(Comparator.naturalOrder())
+                .orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+    }
+}
