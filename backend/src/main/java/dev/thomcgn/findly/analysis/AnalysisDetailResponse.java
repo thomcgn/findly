@@ -1,6 +1,7 @@
 package dev.thomcgn.findly.analysis;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 public record AnalysisDetailResponse(
@@ -11,7 +12,7 @@ public record AnalysisDetailResponse(
         MarketSummary market,
         DealSummary deal
 ) {
-    public record ListingSummary(String title, BigDecimal price, String currency, String url) {
+    public record ListingSummary(String title, BigDecimal price, String currency, String url, List<String> imageUrls) {
     }
 
     public record ProductSummary(String brand, String model, String category, BigDecimal confidence) {

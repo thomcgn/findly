@@ -109,7 +109,8 @@ public class AnalysisService {
                         listing.getTitle(),
                         listing.getListingPrice(),
                         listing.getCurrency(),
-                        listing.getExternalUrl()),
+                        listing.getExternalUrl(),
+                        listing.getImageUrls() == null ? List.of() : listing.getImageUrls()),
                 new AnalysisDetailResponse.ProductSummary(
                         product.getBrand(),
                         product.getModel(),

@@ -68,25 +68,74 @@ public class ListingFetchService {
     }
 
     private BigDecimal extractPrice(String html) {
-        String normalized = html.replace("&nbsp;", " ");
-        Pattern pricePattern = Pattern.compile("(?:Preis|price|€|EUR)[^0-9]{0,30}([0-9]{1,3}(?:[\\.,][0-9]{1,2})?)");
-        Matcher matcher = pricePattern.matcher(normalized);
-        while (matcher.find()) {
-            String value = matcher.group(1).replace('.', ',').replace(".", "").replace(',', '.');
-            try {
-                return new BigDecimal(value);
-            } catch (NumberFormatException ignored) {
+        String normalized = html
+                .replace("&nbsp;", " ")
+                .replace("&euro;", "€")
+                .replace("&#x20AC;", "€");
+
+        BigDecimal bestPrice = null;
+        int bestPriority = Integer.MIN_VALUE;
+
+        Pattern explicitPricePattern = Pattern.compile(
+                "(?i)(?:neupreis|neu\\s+preis|preis\\s+waren|preis\\s+war|preis\\s+beträgt|price\\s+was|price\\s+is|price\\s*:|Preis\\s*:)[^\\d]{0,80}(\\d{1,5}(?:[\\.,]\\d{1,2})?)\\s*(?:€|EUR)",
+                Pattern.CASE_INSENSITIVE
+        );
+        Matcher explicitMatcher = explicitPricePattern.matcher(normalized);
+        while (explicitMatcher.find()) {
+            BigDecimal parsed = parsePriceValue(explicitMatcher.group(1));
+            if (parsed != null && isReasonablePrice(parsed)) {
+                if (bestPriority < 400) {
+                    bestPrice = parsed;
+                    bestPriority = 400;
+                }
             }
         }
-        Matcher simpleMatcher = Pattern.compile("([0-9]{1,3}(?:[.,][0-9]{1,2})?)\\s*(?:€|EUR)").matcher(normalized);
-        if (simpleMatcher.find()) {
-            String value = simpleMatcher.group(1).replace('.', ',').replace(".", "").replace(',', '.');
-            try {
-                return new BigDecimal(value);
-            } catch (NumberFormatException ignored) {
+
+        Pattern genericPricePattern = Pattern.compile(
+                "(?i)(?:preis|price|verkaufspreis|angebotspreis|kosten)[^\\d]{0,80}(\\d{1,5}(?:[\\.,]\\d{1,2})?)\\s*(?:€|EUR)",
+                Pattern.CASE_INSENSITIVE
+        );
+        Matcher genericMatcher = genericPricePattern.matcher(normalized);
+        while (genericMatcher.find()) {
+            BigDecimal parsed = parsePriceValue(genericMatcher.group(1));
+            if (parsed != null && isReasonablePrice(parsed)) {
+                if (bestPriority < 300) {
+                    bestPrice = parsed;
+                    bestPriority = 300;
+                }
             }
         }
-        return null;
+
+        Pattern simplePricePattern = Pattern.compile("(\\d{1,5}(?:[.,]\\d{1,2})?)\\s*(?:€|EUR)", Pattern.CASE_INSENSITIVE);
+        Matcher simpleMatcher = simplePricePattern.matcher(normalized);
+        while (simpleMatcher.find()) {
+            BigDecimal parsed = parsePriceValue(simpleMatcher.group(1));
+            if (parsed != null && isReasonablePrice(parsed)) {
+                if (bestPriority < 100) {
+                    bestPrice = parsed;
+                    bestPriority = 100;
+                }
+            }
+        }
+
+        return bestPrice;
+    }
+
+    private boolean isReasonablePrice(BigDecimal value) {
+        return value.compareTo(BigDecimal.valueOf(3)) >= 0 && value.compareTo(BigDecimal.valueOf(100000)) <= 0;
+    }
+
+    private BigDecimal parsePriceValue(String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) {
+            return null;
+        }
+        String normalized = rawValue.trim().replace('.', ',');
+        normalized = normalized.replace(".", "").replace(',', '.');
+        try {
+            return new BigDecimal(normalized);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private String extractMetaContent(String html, String name) {
@@ -118,7 +167,10 @@ public class ListingFetchService {
     }
 
     private List<String> extractImageUrls(String html) {
-        Pattern pattern = Pattern.compile("(?:og:image|twitter:image|content=)[^\n]*?(https?://[^\"'\s>]+)", Pattern.CASE_INSENSITIVE);
+        Pattern pattern = Pattern.compile(
+                "(?:og:image|twitter:image|contentUrl|content=|src=|data-src=)[^\\n]*?(https?://[^\"'\\s>]+)",
+                Pattern.CASE_INSENSITIVE
+        );
         Matcher matcher = pattern.matcher(html);
         List<String> urls = new ArrayList<>();
         while (matcher.find()) {
@@ -128,7 +180,7 @@ public class ListingFetchService {
             }
         }
         if (urls.isEmpty()) {
-            Matcher imgMatcher = Pattern.compile("<img[^>]+src=\\\"([^\\\"]+)\\\"", Pattern.CASE_INSENSITIVE).matcher(html);
+            Matcher imgMatcher = Pattern.compile("<img[^>]+(?:src|data-src|contentUrl)=\\\"([^\\\"]+)\\\"", Pattern.CASE_INSENSITIVE).matcher(html);
             while (imgMatcher.find()) {
                 urls.add(imgMatcher.group(1));
             }

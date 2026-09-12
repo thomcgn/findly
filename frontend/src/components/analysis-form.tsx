@@ -168,6 +168,16 @@ function DecisionResultCard({ result }: { result: DecisionResult }) {
           </div>
         </div>
 
+        {result.imageUrl ? (
+          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+            <img
+              src={result.imageUrl}
+              alt={result.headline}
+              className="h-64 w-full object-cover"
+            />
+          </div>
+        ) : null}
+
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Originalpreis" value={`${result.originalPrice.toFixed(0)} €`} />
           <Metric label="Kaufpreis" value={`${result.askingPrice.toFixed(0)} €`} />

@@ -42,6 +42,7 @@ export interface DecisionResult {
   id: string;
   status: DealDecision;
   headline: string;
+  imageUrl?: string;
   dealScore: number;
   originalPrice: number;
   currentMarketRange: {

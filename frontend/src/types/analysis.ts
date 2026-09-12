@@ -7,7 +7,8 @@ export interface CreateAnalysisRequest {
 }
 
 export interface AnalysisStartResponse {
-  analysisId: string;
+  analysisId?: string;
+  id?: string;
   status: AnalysisStatus;
 }
 
@@ -17,6 +18,7 @@ export interface ListingSummary {
   currency: string;
   url: string;
   imageUrl?: string;
+  imageUrls?: string[];
 }
 
 export interface ProductSummary {

@@ -11,7 +11,10 @@ import java.util.Locale;
 public class ProductIdentificationService {
 
     public IdentifiedProduct identify(Analysis analysis, Listing listing) {
-        String normalized = (listing.getTitle() + " " + listing.getDescription()).toLowerCase(Locale.ROOT);
+        String combinedText = (listing.getTitle() == null ? "" : listing.getTitle()) + " " +
+                (listing.getDescription() == null ? "" : listing.getDescription()) + " " +
+                String.join(" ", listing.getImageUrls() == null ? java.util.List.of() : listing.getImageUrls());
+        String normalized = combinedText.toLowerCase(Locale.ROOT);
 
         String brand = "Unbekannt";
         String model = "Unbekanntes Modell";
@@ -19,12 +22,28 @@ public class ProductIdentificationService {
         String modelNumber = "-";
         BigDecimal confidence = BigDecimal.valueOf(0.55);
 
-        if (normalized.contains("ikea") || normalized.contains("malm")) {
+        if (normalized.contains("ikea") && normalized.contains("malm")) {
             brand = "IKEA";
             model = "MALM";
-            category = "Möbel";
+            category = "Rollcontainer";
             modelNumber = "MALM";
-            confidence = BigDecimal.valueOf(0.88);
+            confidence = BigDecimal.valueOf(0.94);
+        } else if (normalized.contains("ikea") && normalized.contains("rollcontainer")) {
+            brand = "IKEA";
+            model = "Rollcontainer";
+            category = "Rollcontainer";
+            modelNumber = "ROLLCONTAINER";
+            confidence = BigDecimal.valueOf(0.9);
+        } else if (normalized.contains("schrank") || normalized.contains("wardrobe")) {
+            brand = "Unbekannt";
+            model = "Schrank";
+            category = "Schrank";
+            confidence = BigDecimal.valueOf(0.7);
+        } else if (normalized.contains("kommode") || normalized.contains("dresser") || normalized.contains("chest")) {
+            brand = "Unbekannt";
+            model = "Kommode";
+            category = "Kommode";
+            confidence = BigDecimal.valueOf(0.72);
         } else if (normalized.contains("ray-ban") || normalized.contains("ray ban")) {
             brand = "Ray-Ban";
             model = "Clubmaster";
@@ -50,10 +69,15 @@ public class ProductIdentificationService {
             confidence = BigDecimal.valueOf(0.62);
         }
 
+        String productName = brand.equals("Unbekannt") ? model : brand + " " + model;
+        if (category != null && !category.equals("Allgemeiner Artikel") && !productName.toLowerCase(Locale.ROOT).contains(category.toLowerCase(Locale.ROOT))) {
+            productName = productName + " " + category;
+        }
+
         return IdentifiedProduct.builder()
                 .analysis(analysis)
                 .brand(brand)
-                .name(brand + " " + model)
+                .name(productName)
                 .model(model)
                 .modelNumber(modelNumber)
                 .category(category)

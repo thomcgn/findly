@@ -1,6 +1,8 @@
 import type { DecisionResult, OfferInput } from "@/types/decision";
 
-const BACKEND_URL = "http://localhost:8080";
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "http://localhost:8080"
+).replace(/\/+$/, "");
 
 function toNumber(value: number | string | null | undefined): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -25,36 +27,60 @@ export async function analyzeOffer(input: Partial<OfferInput> = {}): Promise<Dec
 
   if (!createResponse.ok) {
     const message = await createResponse.text();
-    throw new Error(message || "Die Analyse konnte nicht gestartet werden.");
+    if (createResponse.status === 400) throw new Error(message || "Ungültige Anfrage: Bitte überprüfe die eingegebenen Daten.");
+    if (createResponse.status === 404) throw new Error(message || "Analyse-Endpunkt nicht gefunden.");
+    if (createResponse.status === 408) throw new Error(message || "Zeitüberschreitung beim Starten der Analyse.");
+    if (createResponse.status === 429) throw new Error(message || "Zu viele Anfragen. Bitte versuche es gleich erneut.");
+    if (createResponse.status >= 500) throw new Error(message || "Serverfehler beim Starten der Analyse.");
+    throw new Error(message || `Die Analyse konnte nicht gestartet werden (HTTP ${createResponse.status}).`);
   }
 
-  const startData = (await createResponse.json()) as { id?: string; status?: string };
-  const analysisId = startData.id;
+  const startData = (await createResponse.json()) as {
+    analysisId?: string;
+    id?: string;
+    status?: string;
+  };
+  const analysisId = startData.analysisId ?? startData.id;
 
   if (!analysisId) {
-    throw new Error("Die Analyseantwort war ungültig.");
+    throw new Error("Die Analyse wurde gestartet, aber die Antwort enthält keine Analyse-ID.");
   }
 
   const detailResponse = await fetch(`${BACKEND_URL}/api/analyses/${analysisId}`);
   if (!detailResponse.ok) {
     const message = await detailResponse.text();
-    throw new Error(message || "Die Analyse wurde gestartet, aber die Details konnten nicht geladen werden.");
+    if (detailResponse.status === 404) throw new Error(message || `Analyse ${analysisId} wurde nicht gefunden.`);
+    if (detailResponse.status === 408) throw new Error(message || "Zeitüberschreitung beim Laden der Analysedetails.");
+    if (detailResponse.status === 429) throw new Error(message || "Zu viele Anfragen beim Laden der Analysedetails.");
+    if (detailResponse.status >= 500) throw new Error(message || "Serverfehler beim Laden der Analysedetails.");
+    throw new Error(message || `Analysedetails konnten nicht geladen werden (HTTP ${detailResponse.status}).`);
   }
 
   const detail = (await detailResponse.json()) as {
     id: string;
     status?: string;
-    listing?: { title?: string; price?: number; currency?: string; url?: string };
+    listing?: { title?: string; price?: number; currency?: string; url?: string; imageUrls?: string[] };
     product?: { brand?: string; model?: string; category?: string; confidence?: number };
     market?: { medianPrice?: number; lowestPrice?: number; highestPrice?: number };
     deal?: { score?: string; differencePercent?: number };
   };
 
-  const askingPrice = toNumber(input.askingPrice ?? detail.listing?.price ?? 0);
-  const originalPrice = toNumber(input.originalPrice ?? detail.market?.highestPrice ?? detail.listing?.price ?? 0);
-  const marketMedian = toNumber(detail.market?.medianPrice ?? detail.listing?.price ?? 0);
+  if (!detail || typeof detail !== "object") {
+    throw new Error("Die Analysedetails haben ein ungültiges Format.");
+  }
+
+  if (!detail.id || typeof detail.id !== "string") {
+    throw new Error("Die Analysedetails enthalten keine gültige Analyse-ID.");
+  }
+
+  const askingPrice = toNumber(detail.listing?.price ?? input.askingPrice ?? 0);
+  const originalPrice = toNumber(detail.market?.highestPrice ?? input.originalPrice ?? detail.listing?.price ?? 0);
+  const marketMedian = toNumber(detail.market?.medianPrice ?? input.originalPrice ?? detail.listing?.price ?? 0);
   const lowerBound = toNumber(detail.market?.lowestPrice ?? Math.max(0, marketMedian * 0.85));
   const higherBound = toNumber(detail.market?.highestPrice ?? Math.max(0, marketMedian * 1.15));
+  const productHeadline = [detail.product?.brand, detail.product?.model, detail.product?.category]
+    .filter(Boolean)
+    .join(" ");
   const priceDelta = marketMedian > 0 ? (askingPrice - marketMedian) / marketMedian : 0;
   const dealScore = Math.max(0, Math.min(100, Math.round(100 - Math.abs(priceDelta) * 200)));
   const transportCost = Math.max(0, Math.round((Math.abs((originalPrice || askingPrice) - askingPrice) * 0.15 + 15) * 100) / 100);
@@ -71,7 +97,8 @@ export async function analyzeOffer(input: Partial<OfferInput> = {}): Promise<Dec
   return {
     id: detail.id ?? analysisId,
     status: "LOHNT_SICH" as const,
-    headline: detail.listing?.title || "Verifizierte Angebotsanalyse",
+    headline: productHeadline || detail.listing?.title || "Verifizierte Angebotsanalyse",
+    imageUrl: detail.listing?.imageUrls?.[0] ?? undefined,
     dealScore,
     originalPrice,
     currentMarketRange: { min: lowerBound, max: higherBound },
@@ -90,7 +117,9 @@ export async function analyzeOffer(input: Partial<OfferInput> = {}): Promise<Dec
     advantageIncludingTime: Math.max(0, originalPrice - effectivePurchasePrice),
     recommendation,
     reasons: [
-      detail.product?.brand ? `Erkanntes Produkt: ${detail.product.brand}` : "Produkt wurde aus der Angebotsseite erkannt.",
+      detail.product?.brand || detail.product?.model
+        ? `Erkanntes Produkt: ${[detail.product?.brand, detail.product?.model, detail.product?.category].filter(Boolean).join(" ")}`
+        : "Produkt wurde aus der Angebotsseite erkannt.",
       detail.product?.confidence ? `Confidence: ${(detail.product.confidence * 100).toFixed(0)}%` : "Preisvergleich wurde anhand der eingegebenen Angebotsdaten durchgeführt.",
       `Marktpreis: ${marketMedian.toFixed(0)} €`,
     ],

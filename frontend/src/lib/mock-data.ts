@@ -11,12 +11,12 @@ export const defaultVehicle: VehicleProfile = {
 };
 
 export const defaultOfferInput: OfferInput = {
-  url: "https://www.kleinanzeigen.de/s-anzeige/kommode-hamburg-123456789",
-  productName: "Kommode",
-  originalPrice: 790,
-  askingPrice: 80,
-  homeLocation: "Münster",
-  sellerLocation: "Hamburg",
+  url: "",
+  productName: "",
+  originalPrice: 0,
+  askingPrice: 0,
+  homeLocation: "",
+  sellerLocation: "",
   vehicle: defaultVehicle,
   timeValuePerHour: 15,
   includeTimeCosts: true,
