@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@CrossOrigin(origins = "*")
 @RequestMapping("/api")
 public class AnalysisController {
 
@@ -30,7 +29,12 @@ public class AnalysisController {
   }
 
   @GetMapping("/analyses/{id}")
-  public ResponseEntity<AnalysisDetailResponse> getAnalysis(@PathVariable UUID id) {
+  public ResponseEntity<AnalysisStatusResponse> getAnalysisStatus(@PathVariable UUID id) {
+    return ResponseEntity.ok(analysisService.getAnalysisStatus(id));
+  }
+
+  @GetMapping("/analyses/{id}/result")
+  public ResponseEntity<AnalysisDetailResponse> getAnalysisResult(@PathVariable UUID id) {
     return ResponseEntity.ok(analysisService.getAnalysis(id));
   }
 }

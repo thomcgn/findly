@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AnalysisService {
 
   private final AnalysisRepository analysisRepository;
+  private final AnalysisProcessingService analysisProcessingService;
   private final ProductIdentificationService productIdentificationService;
   private final PriceResearchService priceResearchService;
   private final ListingFetchService listingFetchService;
@@ -29,10 +30,12 @@ public class AnalysisService {
 
   public AnalysisService(
       AnalysisRepository analysisRepository,
+      AnalysisProcessingService analysisProcessingService,
       ProductIdentificationService productIdentificationService,
       PriceResearchService priceResearchService,
       ListingFetchService listingFetchService) {
     this.analysisRepository = analysisRepository;
+    this.analysisProcessingService = analysisProcessingService;
     this.productIdentificationService = productIdentificationService;
     this.priceResearchService = priceResearchService;
     this.listingFetchService = listingFetchService;
@@ -45,39 +48,39 @@ public class AnalysisService {
       throw new IllegalArgumentException("URL is required");
     }
 
-    Analysis analysis = Analysis.builder().status(AnalysisStatus.PENDING).build();
-    Analysis persistedAnalysis = analysisRepository.save(analysis);
-
-    ListingFetchResult listingFetchResult = listingFetchService.fetch(url);
-    BigDecimal listingPrice = listingFetchResult.price();
-    if (listingPrice == null || listingPrice.compareTo(BigDecimal.ZERO) <= 0) {
-      listingPrice = detectListingPrice(url);
-    }
-
-    Listing listing =
-        Listing.builder()
-            .analysis(persistedAnalysis)
-            .externalUrl(url)
-            .title(listingFetchResult.title())
-            .description(listingFetchResult.description())
-            .listingPrice(listingPrice)
-            .currency(listingFetchResult.currency())
-            .imageUrls(new java.util.ArrayList<>(listingFetchResult.imageUrls()))
+    Analysis analysis =
+        Analysis.builder()
+            .status(AnalysisStatus.PENDING)
+            .progress(0)
+            .startedAt(null)
+            .completedAt(null)
+            .failedAt(null)
+            .errorCode(null)
+            .errorMessage(null)
             .build();
-    persistedAnalysis.setListing(listing);
-
-    IdentifiedProduct product = productIdentificationService.identify(persistedAnalysis, listing);
-    persistedAnalysis.setIdentifiedProduct(product);
-
-    List<PriceSource> priceSources = priceResearchService.findComparablePrices(persistedAnalysis);
-    priceSources.forEach(priceSource -> priceSource.setAnalysis(persistedAnalysis));
-    persistedAnalysis.setPriceSources(new java.util.ArrayList<>(priceSources));
-
-    persistedAnalysis.setStatus(AnalysisStatus.COMPLETED);
-    persistedAnalysis.setCompletedAt(Instant.now());
-    analysisRepository.save(persistedAnalysis);
-
+    Analysis persistedAnalysis = analysisRepository.save(analysis);
+    analysisProcessingService.processAnalysisAsync(persistedAnalysis.getId(), url);
     return new AnalysisStartResponse(persistedAnalysis.getId(), persistedAnalysis.getStatus());
+  }
+
+  @Transactional(readOnly = true)
+  public AnalysisStatusResponse getAnalysisStatus(UUID id) {
+    Analysis analysis =
+        analysisRepository
+            .findById(id)
+            .orElseThrow(() -> new EntityNotFoundException("Analysis not found: " + id));
+
+    return new AnalysisStatusResponse(
+        analysis.getId(),
+        analysis.getStatus(),
+        analysis.getProgress(),
+        analysis.getCreatedAt(),
+        analysis.getUpdatedAt(),
+        analysis.getStartedAt(),
+        analysis.getCompletedAt(),
+        analysis.getFailedAt(),
+        analysis.getErrorCode(),
+        analysis.getErrorMessage());
   }
 
   @Transactional(readOnly = true)

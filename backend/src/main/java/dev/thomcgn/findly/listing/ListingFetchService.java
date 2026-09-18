@@ -2,12 +2,18 @@ package dev.thomcgn.findly.listing;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.IDN;
+import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
@@ -15,12 +21,21 @@ import org.springframework.stereotype.Service;
 @Service
 public class ListingFetchService {
 
+  private static final Set<String> ALLOWED_HOSTS = Set.of("kleinanzeigen.de", "www.kleinanzeigen.de");
+  private static final int MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+  private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+  private static final Duration READ_TIMEOUT = Duration.ofSeconds(10);
+
   private final HttpClient httpClient =
-      HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
+      HttpClient.newBuilder()
+          .followRedirects(HttpClient.Redirect.NEVER)
+          .connectTimeout(CONNECT_TIMEOUT)
+          .build();
 
   public ListingFetchResult fetch(String url) {
+    URI uri = validateUrl(url);
     try {
-      String html = fetchHtml(url);
+      String html = fetchHtml(uri);
       String title =
           extractFirstMatch(
               html,
@@ -41,38 +56,100 @@ public class ListingFetchService {
           price == null ? BigDecimal.ZERO : price,
           "EUR",
           imageUrls);
+    } catch (IllegalArgumentException ex) {
+      throw ex;
     } catch (IOException ex) {
-      return new ListingFetchResult(
-          "Eingebettetes Angebot",
-          "Beschreibung konnte nicht automatisch geladen werden.",
-          BigDecimal.ZERO,
-          "EUR",
-          List.of());
+      throw new IllegalStateException("Unable to fetch listing", ex);
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      return new ListingFetchResult(
-          "Eingebettetes Angebot",
-          "Beschreibung konnte nicht automatisch geladen werden.",
-          BigDecimal.ZERO,
-          "EUR",
-          List.of());
+      throw new IllegalStateException("Listing fetch interrupted", ex);
     }
   }
 
-  private String fetchHtml(String url) throws IOException, InterruptedException {
+  private URI validateUrl(String rawUrl) {
+    if (rawUrl == null || rawUrl.isBlank()) {
+      throw new IllegalArgumentException("URL is required");
+    }
+
+    URI uri;
+    try {
+      uri = URI.create(rawUrl.trim());
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("URL is invalid", ex);
+    }
+
+    if (!"https".equalsIgnoreCase(uri.getScheme())) {
+      throw new IllegalArgumentException("Only HTTPS Kleinanzeigen URLs are allowed");
+    }
+    if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
+      throw new IllegalArgumentException("URL user info is not allowed");
+    }
+    if (uri.getHost() == null || uri.getHost().isBlank()) {
+      throw new IllegalArgumentException("URL host is required");
+    }
+    if (uri.getPort() != -1 && uri.getPort() != 443) {
+      throw new IllegalArgumentException("Only port 443 is allowed for Kleinanzeigen URLs");
+    }
+
+    String normalizedHost = IDN.toASCII(uri.getHost(), IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
+    if (!ALLOWED_HOSTS.contains(normalizedHost)) {
+      throw new IllegalArgumentException("Only Kleinanzeigen URLs are allowed");
+    }
+
+    try {
+      for (InetAddress address : InetAddress.getAllByName(normalizedHost)) {
+        if (isBlockedAddress(address)) {
+          throw new IllegalArgumentException("Resolved host is not allowed");
+        }
+      }
+    } catch (Exception ex) {
+      throw new IllegalArgumentException("Unable to resolve Kleinanzeigen hostname", ex);
+    }
+
+    return uri.normalize();
+  }
+
+  private boolean isBlockedAddress(InetAddress address) {
+    return address == null
+        || address.isAnyLocalAddress()
+        || address.isLoopbackAddress()
+        || address.isLinkLocalAddress()
+        || address.isSiteLocalAddress()
+        || address.isMulticastAddress();
+  }
+
+  private String fetchHtml(URI uri) throws IOException, InterruptedException {
     HttpRequest request =
         HttpRequest.newBuilder()
-            .uri(URI.create(url))
+            .uri(uri)
+            .timeout(READ_TIMEOUT)
             .header("User-Agent", "Mozilla/5.0 (compatible; Findly/1.0; +https://findly.local)")
             .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .GET()
             .build();
 
-    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    if (response.statusCode() >= 400) {
-      throw new IOException("Unable to fetch URL: " + response.statusCode());
+    HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+    if (response.statusCode() >= 300 && response.statusCode() < 400) {
+      throw new IllegalArgumentException("Redirects are not allowed for listing URLs");
     }
-    return response.body();
+    if (response.statusCode() >= 400) {
+      throw new IllegalArgumentException("Unable to fetch list page: " + response.statusCode());
+    }
+
+    byte[] body = response.body();
+    if (body == null || body.length > MAX_RESPONSE_BYTES) {
+      throw new IllegalArgumentException("Listing response is too large");
+    }
+
+    String contentType = response.headers().firstValue("Content-Type").orElse("").toLowerCase(Locale.ROOT);
+    if (!contentType.isBlank()
+        && !contentType.contains("text/html")
+        && !contentType.contains("application/xhtml+xml")) {
+      throw new IllegalArgumentException("Listing response has an unsupported content type");
+    }
+
+    return new String(body, StandardCharsets.UTF_8);
   }
 
   private BigDecimal extractPrice(String html) {

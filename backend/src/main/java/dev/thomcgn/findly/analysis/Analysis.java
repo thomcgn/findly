@@ -15,6 +15,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -63,6 +64,14 @@ public class Analysis {
   @Builder.Default
   private AnalysisStatus status = AnalysisStatus.PENDING;
 
+  @Version
+  @Column(nullable = false)
+  private long version;
+
+  @Builder.Default
+  @Column(nullable = false)
+  private int progress = 0;
+
   @CreationTimestamp
   @Column(nullable = false, updatable = false)
   private Instant createdAt;
@@ -71,5 +80,13 @@ public class Analysis {
   @Column(nullable = false)
   private Instant updatedAt;
 
+  private Instant startedAt;
   private Instant completedAt;
+  private Instant failedAt;
+
+  @Column(length = 128)
+  private String errorCode;
+
+  @Column(length = 2048)
+  private String errorMessage;
 }
