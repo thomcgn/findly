@@ -1,7 +1,9 @@
 package dev.thomcgn.findly.analysis;
 
+import dev.thomcgn.findly.common.validation.ListingUrl;
+import dev.thomcgn.findly.error.AnalysisErrorCode;
+import dev.thomcgn.findly.error.AnalysisException;
 import dev.thomcgn.findly.listing.Listing;
-import dev.thomcgn.findly.listing.ListingFetchResult;
 import dev.thomcgn.findly.listing.ListingFetchService;
 import dev.thomcgn.findly.price.DealScoreService;
 import dev.thomcgn.findly.price.PriceResearchService;
@@ -11,7 +13,6 @@ import dev.thomcgn.findly.product.ProductIdentificationService;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -43,10 +44,7 @@ public class AnalysisService {
 
   @Transactional
   public AnalysisStartResponse createAnalysis(String rawUrl) {
-    String url = rawUrl == null ? "" : rawUrl.trim();
-    if (url.isBlank()) {
-      throw new IllegalArgumentException("URL is required");
-    }
+    String url = ListingUrl.parse(rawUrl).toString();
 
     Analysis analysis =
         Analysis.builder()
@@ -70,6 +68,8 @@ public class AnalysisService {
             .findById(id)
             .orElseThrow(() -> new EntityNotFoundException("Analysis not found: " + id));
 
+    AnalysisErrorCode failure =
+        analysis.getStatus() == AnalysisStatus.FAILED ? failureCode(analysis) : null;
     return new AnalysisStatusResponse(
         analysis.getId(),
         analysis.getStatus(),
@@ -79,8 +79,8 @@ public class AnalysisService {
         analysis.getStartedAt(),
         analysis.getCompletedAt(),
         analysis.getFailedAt(),
-        analysis.getErrorCode(),
-        analysis.getErrorMessage());
+        failure == null ? null : failure.name(),
+        failure == null ? null : failure.detail());
   }
 
   @Transactional(readOnly = true)
@@ -90,12 +90,19 @@ public class AnalysisService {
             .findById(id)
             .orElseThrow(() -> new EntityNotFoundException("Analysis not found: " + id));
 
+    if (analysis.getStatus() == AnalysisStatus.FAILED) {
+      throw new AnalysisException(failureCode(analysis));
+    }
+    if (analysis.getStatus() != AnalysisStatus.COMPLETED) {
+      throw new AnalysisException(AnalysisErrorCode.RESULT_NOT_READY);
+    }
+
     Listing listing = analysis.getListing();
     IdentifiedProduct product = analysis.getIdentifiedProduct();
     List<PriceSource> priceSources = analysis.getPriceSources();
 
     if (listing == null || product == null || priceSources == null || priceSources.isEmpty()) {
-      throw new EntityNotFoundException("Analysis not fully initialized: " + id);
+      throw new AnalysisException(AnalysisErrorCode.INTERNAL_ERROR);
     }
 
     BigDecimal marketMedian = medianPrice(priceSources);
@@ -119,6 +126,14 @@ public class AnalysisService {
             product.getBrand(), product.getModel(), product.getCategory(), product.getConfidence()),
         new AnalysisDetailResponse.MarketSummary(marketMedian, lowestPrice, highestPrice),
         new AnalysisDetailResponse.DealSummary(dealScore, differencePercent));
+  }
+
+  private AnalysisErrorCode failureCode(Analysis analysis) {
+    return switch (analysis.getErrorCode() == null ? "" : analysis.getErrorCode()) {
+      case "LISTING_FETCH_FAILED" -> AnalysisErrorCode.LISTING_FETCH_FAILED;
+      case "ANALYSIS_TIMEOUT" -> AnalysisErrorCode.ANALYSIS_TIMEOUT;
+      default -> AnalysisErrorCode.ANALYSIS_FAILED;
+    };
   }
 
   private BigDecimal detectListingPrice(String url) {

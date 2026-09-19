@@ -1,8 +1,8 @@
 package dev.thomcgn.findly.config;
 
-import java.util.Arrays;
+import java.time.Clock;
 import java.util.List;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -10,33 +10,34 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties({CorsProperties.class, RateLimitProperties.class})
 public class SecurityConfig {
-
-  @Value("${app.cors.allowed-origins:http://localhost:3000}")
-  private String allowedOrigins;
+  @Bean
+  Clock applicationClock() {
+    return Clock.systemUTC();
+  }
 
   @Bean
-  SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+  SecurityFilterChain securityFilterChain(
+      HttpSecurity http, CorsConfigurationSource corsConfigurationSource) throws Exception {
     http.csrf(AbstractHttpConfigurer::disable)
-        .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+        .cors(cors -> cors.configurationSource(corsConfigurationSource))
         .authorizeHttpRequests(request -> request.anyRequest().permitAll());
     return http.build();
   }
 
-  private CorsConfigurationSource corsConfigurationSource() {
+  @Bean
+  CorsConfigurationSource corsConfigurationSource(CorsProperties properties) {
     CorsConfiguration configuration = new CorsConfiguration();
-    List<String> origins = Arrays.stream(allowedOrigins.split(","))
-        .map(String::trim)
-        .filter(s -> !s.isEmpty())
-        .toList();
-    configuration.setAllowedOrigins(origins);
-    configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-    configuration.setAllowedHeaders(List.of("*"));
+    configuration.setAllowedOrigins(properties.allowedOrigins());
+    configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+    configuration.setAllowedHeaders(List.of("Content-Type", "Accept"));
+    configuration.setExposedHeaders(List.of("X-Trace-ID", "Retry-After"));
     UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
     source.registerCorsConfiguration("/api/**", configuration);
     return source;

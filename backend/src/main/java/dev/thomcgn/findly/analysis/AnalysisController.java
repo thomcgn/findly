@@ -1,9 +1,9 @@
 package dev.thomcgn.findly.analysis;
 
+import dev.thomcgn.findly.common.validation.ListingUrl;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,7 +24,8 @@ public class AnalysisController {
   @PostMapping("/analyses")
   public ResponseEntity<AnalysisStartResponse> createAnalysis(
       @Valid @RequestBody CreateAnalysisRequest request) {
-    AnalysisStartResponse response = analysisService.createAnalysis(request.url());
+    AnalysisStartResponse response =
+        analysisService.createAnalysis(ListingUrl.parse(request.url()).toString());
     return ResponseEntity.accepted().body(response);
   }
 

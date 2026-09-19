@@ -1,8 +1,8 @@
 package dev.thomcgn.findly.listing;
 
+import dev.thomcgn.findly.common.validation.ListingUrl;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.net.IDN;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,7 +21,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class ListingFetchService {
 
-  private static final Set<String> ALLOWED_HOSTS = Set.of("kleinanzeigen.de", "www.kleinanzeigen.de");
+  private static final Set<String> ALLOWED_HOSTS =
+      Set.of("kleinanzeigen.de", "www.kleinanzeigen.de");
   private static final int MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
   private static final Duration READ_TIMEOUT = Duration.ofSeconds(10);
@@ -67,34 +68,8 @@ public class ListingFetchService {
   }
 
   private URI validateUrl(String rawUrl) {
-    if (rawUrl == null || rawUrl.isBlank()) {
-      throw new IllegalArgumentException("URL is required");
-    }
-
-    URI uri;
-    try {
-      uri = URI.create(rawUrl.trim());
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException("URL is invalid", ex);
-    }
-
-    if (!"https".equalsIgnoreCase(uri.getScheme())) {
-      throw new IllegalArgumentException("Only HTTPS Kleinanzeigen URLs are allowed");
-    }
-    if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
-      throw new IllegalArgumentException("URL user info is not allowed");
-    }
-    if (uri.getHost() == null || uri.getHost().isBlank()) {
-      throw new IllegalArgumentException("URL host is required");
-    }
-    if (uri.getPort() != -1 && uri.getPort() != 443) {
-      throw new IllegalArgumentException("Only port 443 is allowed for Kleinanzeigen URLs");
-    }
-
-    String normalizedHost = IDN.toASCII(uri.getHost(), IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
-    if (!ALLOWED_HOSTS.contains(normalizedHost)) {
-      throw new IllegalArgumentException("Only Kleinanzeigen URLs are allowed");
-    }
+    URI uri = ListingUrl.parse(rawUrl);
+    String normalizedHost = uri.getHost();
 
     try {
       for (InetAddress address : InetAddress.getAllByName(normalizedHost)) {
@@ -129,7 +104,8 @@ public class ListingFetchService {
             .GET()
             .build();
 
-    HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+    HttpResponse<byte[]> response =
+        httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
     if (response.statusCode() >= 300 && response.statusCode() < 400) {
       throw new IllegalArgumentException("Redirects are not allowed for listing URLs");
     }
@@ -142,7 +118,8 @@ public class ListingFetchService {
       throw new IllegalArgumentException("Listing response is too large");
     }
 
-    String contentType = response.headers().firstValue("Content-Type").orElse("").toLowerCase(Locale.ROOT);
+    String contentType =
+        response.headers().firstValue("Content-Type").orElse("").toLowerCase(Locale.ROOT);
     if (!contentType.isBlank()
         && !contentType.contains("text/html")
         && !contentType.contains("application/xhtml+xml")) {

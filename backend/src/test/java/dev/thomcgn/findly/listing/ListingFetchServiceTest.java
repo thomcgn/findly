@@ -11,20 +11,20 @@ class ListingFetchServiceTest {
   @Test
   void rejectsNonKleinanzeigenHosts() {
     assertThrows(
-        IllegalArgumentException.class,
+        dev.thomcgn.findly.error.AnalysisException.class,
         () -> service.fetch("https://example.com/s-anzeige/test"));
   }
 
   @Test
   void rejectsPrivateIpAndLocalHosts() {
     assertThrows(
-        IllegalArgumentException.class,
+        dev.thomcgn.findly.error.AnalysisException.class,
         () -> service.fetch("https://127.0.0.1/s-anzeige/test"));
     assertThrows(
-        IllegalArgumentException.class,
+        dev.thomcgn.findly.error.AnalysisException.class,
         () -> service.fetch("https://localhost/s-anzeige/test"));
     assertThrows(
-        IllegalArgumentException.class,
+        dev.thomcgn.findly.error.AnalysisException.class,
         () -> service.fetch("https://[::1]/s-anzeige/test"));
   }
 }

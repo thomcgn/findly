@@ -2,6 +2,103 @@
 
 Stand der Prüfung: 2026-09-12, Branch `master`, Commit `94bea417e907d597fa48795f6184c6e440685b21`.
 
+## Fortschritt am 2026-09-19 – API-Fehlervertrag und URL-Validierung
+
+Die fachlichen Änderungen aus Schritt 3 sind umgesetzt:
+
+- Zentraler `AnalysisErrorCode` und ein gemeinsames Problemformat für Controller
+  und Rate-Limit-Filter: `application/problem+json`, stabiler `code`, UTC-Zeitpunkt
+  sowie identische Trace-ID im Body und im `X-Trace-ID`-Header.
+- Ungültiges JSON, UUIDs und Request-Validierungsfehler liefern 400; unbekannte
+  Analysen 404; laufende Analysen am Ergebnis-Endpunkt 409; fehlgeschlagene
+  Analysen 422. Gespeicherte Provider-/Timeout-Codes werden auf 502/504 abgebildet.
+  Ein inkonsistenter COMPLETED-Datensatz ist ein interner Fehler (500), kein 404.
+  Framework-Statuscodes 405/406/415 bleiben erhalten.
+- Interne Exception-Texte werden weder über Problem Details noch über den
+  Status-Endpunkt ausgegeben, auch nicht bei bereits gespeicherten Fehlern.
+- Gemeinsame syntaktische URL-Allowlist für Controller, Service und Listing-Client:
+  HTTPS, exakte Kleinanzeigen-Hosts, Ports 80/443, maximal 2048 Zeichen,
+  Normalisierung und Ablehnung von Userinfo, Fragmenten und Host-Verwechslungen.
+  Ungültige URLs werden vor Persistenz und Scheduling abgewiesen; diese Prüfung
+  führt keine DNS- oder Netzwerkaufrufe aus.
+- CORS und Rate Limits über validierte `@ConfigurationProperties` statt
+  Feldinjektion konfiguriert. CORS erlaubt nur explizite Origins, GET/POST/OPTIONS
+  und benötigte Header; `X-Trace-ID` und `Retry-After` sind im Browser lesbar.
+- Thread-sicheres, begrenztes Rate-Limit mit getrennten 60-Sekunden-Fenstern für
+  Erstellung (20/min) und kombinierte Status-/Ergebnisabfragen (120/min) je IP.
+  Maximal 10000 aktive IP/Operations-Fenster, abgelaufene Einträge werden entfernt.
+  Preflights verbrauchen kein Budget; `X-Forwarded-For` umgeht das Limit nicht.
+- README, `.env.example` und Compose dokumentieren bzw. übergeben die neuen
+  Konfigurationswerte und den Fehlervertrag.
+
+Verifikation: Backend-Lauf mit 84 erfolgreichen Tests einschließlich
+PostgreSQL/Flyway, URL-Grenzfällen, allen Fehlercodes, Secret-Redaktion,
+konkurrierenden Rate-Limit-Zugriffen, Ablauf/Speichergrenzen, CORS und ungültiger
+Konfiguration. Enforcer, Spotless und SpotBugs bestanden. Die bereits dokumentierten
+Java-/Dependency-Warnungen verhindern weiterhin eine warning-freie Gesamtabnahme;
+keine Regeln wurden abgeschaltet oder Befunde unterdrückt.
+
+Nächster Schritt ist Schritt 4: SSRF-sicherer Listing-Client mit gebundener
+DNS-Auflösung, kontrollierten Redirects, tatsächlichem Streaming-Größenlimit,
+konfigurierbaren Timeouts und HTML-Parser. Die bisherige DNS-/HTTP-Implementierung
+ist dadurch noch nicht gehärtet. Ebenso bleiben die Async-Probleme, allgemeine
+Fehlerklassifizierung im Orchestrator, Laufzeitbegrenzung und synthetischen
+Produkt-/Preisdaten aus späteren Schritten offen. Rate Limits gelten derzeit pro
+Anwendungsinstanz und sind nicht zwischen mehreren Instanzen geteilt.
+
+## Fortschritt am 2026-09-18
+
+Abgleich mit `b8d7d22`: Die bisherigen Phase-1-Commits haben Teile der Schritte 1–5
+angelegt, aber keinen dieser Schritte vollständig abgenommen. Die nachfolgenden
+Review-Befunde beschreiben den ursprünglichen Stand; diese Fortschrittsnotiz hält
+die inzwischen überprüften Änderungen fest.
+
+In dieser Fortsetzung umgesetzt:
+
+- Neue Migration `V2__add_analysis_processing_metadata.sql` ergänzt die bereits
+  im Entity verwendeten Versions-, Fortschritts-, Zeit- und Fehlerfelder. V1 bleibt
+  unverändert. Bestehende terminale Analysen erhalten Fortschritt 100; eine
+  Datenbank-Constraint begrenzt den Fortschritt auf 0–100.
+- PostgreSQL-Tests prüfen das Upgrade von V1 mit vorhandenen Analysen, die erneute
+  Flyway-Ausführung, Fortschrittsgrenzen, JPA-Persistenz und optimistische Sperren.
+- Testcontainers von 1.20.6 auf 1.21.4 aktualisiert: Der vorherige Client scheiterte
+  am aktuellen Docker mit „client version 1.32 is too old“.
+- SpotBugs-Befund zur nicht wiederhergestellten transienten Filter-Map durch
+  Verwendung von `OncePerRequestFilter` behoben; vorhandene Spotless-Abweichungen
+  formatiert. Keine Quality Gates deaktiviert.
+- Compose verwendet dieselben konfigurierten Datenbankzugänge für PostgreSQL und
+  Backend. Frontend und Compose verwenden `NEXT_PUBLIC_API_URL` mit einer aus dem
+  Browser erreichbaren Adresse. Der Frontend-Healthcheck verwendet explizit IPv4,
+  passend zum Next.js-Listener (`0.0.0.0`); `localhost` wurde im Alpine-Container
+  auf `::1` aufgelöst und führte zu „Connection refused“. README um Start- und
+  Migrationshinweise ergänzt.
+
+Verifikation:
+
+- Backend `./mvnw -B spotless:apply clean verify`: erfolgreich; 9 Tests, keine
+  Fehler oder übersprungenen Tests; Enforcer, Spotless und SpotBugs erfolgreich.
+- **Noch nicht warning-frei:** Java-25-/Unsafe-Warnungen aus Build-Werkzeugen,
+  dynamische Mockito-Agent-Anbindung, Testcontainers/JUnit-CloseableResource und
+  automatisch erzeugter Spring-Security-Entwicklungsbenutzer bleiben zu beheben.
+- `npm ci` erfolgreich, jedoch Warnungen zu ESLint 9 und einem durch die lokale
+  npm-Konfiguration blockierten Installationsskript (`unrs-resolver`).
+- Frontend `npm run lint:ci` und `npm run typecheck`: erfolgreich. Production Build
+  im Compose-Frontend-Image erfolgreich und ohne Build-Warnungen. Der lokale
+  Build scheitert an der Portbindungsbeschränkung der Ausführungsumgebung für
+  Turbopack; der Container-Build prüft denselben Quellstand.
+- Compose-Konfiguration syntaktisch validiert; isolierter Stack
+  `findly-refactor-check` ohne Host-Portbelegung erfolgreich gestartet:
+  PostgreSQL, Backend und Frontend jeweils `healthy`.
+- `git diff --check`: erfolgreich. Die vollständige Definition of Done bleibt
+  wegen der oben genannten Warnungen und fachlichen Lücken offen.
+
+Nächste fachliche Schritte bleiben URL-/Fehlervertrag und SSRF-Client, danach die
+vollständige State Machine mit transaktionsfreien Provider-Aufrufen. Besonders
+kritisch: Async-Scheduling erfolgt derzeit vor dem Commit; `CallerRunsPolicy`
+kann Arbeit in den Request verlagern. Produkt-/Preis-Hardcodings und die
+Frontend-Fake-Berechnungen sind weiterhin vorhanden. Diese Fortsetzung macht
+keine Aussage über Produktionsreife oder den Abschluss der Schritte 3–10.
+
 ## Auftrag an GitHub Copilot
 
 Dieses Dokument ist die verbindliche Arbeitsanweisung für das Refactoring. Arbeite in kleinen, fachlich geschlossenen Commits. Nach jedem Commit müssen alle für den betroffenen Teil verfügbaren Quality Gates ohne Fehler und ohne Warnungen durchlaufen. Überspringe keine fehlgeschlagenen Prüfungen, deaktiviere keine Regeln und füge keine Suppressions hinzu, um Befunde zu verdecken.

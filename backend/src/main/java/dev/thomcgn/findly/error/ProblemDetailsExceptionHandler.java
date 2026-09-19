@@ -1,68 +1,89 @@
 package dev.thomcgn.findly.error;
 
+import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.http.HttpStatus;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.FieldError;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
-@ControllerAdvice
+@RestControllerAdvice
 public class ProblemDetailsExceptionHandler {
-
-  private Map<String, Object> toProblem(HttpStatus status, String title, String detail, String instance) {
-    Map<String, Object> body = new HashMap<>();
-    body.put("type", "about:blank");
-    body.put("title", title);
-    body.put("status", status.value());
-    body.put("detail", detail);
-    body.put("instance", instance);
-    body.put("traceId", UUID.randomUUID().toString());
-    body.put("timestamp", Instant.now().toString());
-    return body;
+  @ExceptionHandler(AnalysisException.class)
+  public ResponseEntity<Map<String, Object>> handleAnalysis(
+      AnalysisException ex, HttpServletRequest request, HttpServletResponse response) {
+    return problem(ex.code(), request, response);
   }
 
-  @ExceptionHandler(MethodArgumentNotValidException.class)
-  @ResponseBody
-  public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex, HttpServletRequest req) {
-    StringBuilder sb = new StringBuilder();
-    for (FieldError fe : ex.getBindingResult().getFieldErrors()) {
-      sb.append(fe.getField()).append(": ").append(fe.getDefaultMessage()).append("; ");
-    }
-    Map<String, Object> body = toProblem(HttpStatus.BAD_REQUEST, "Invalid request", sb.toString(), req.getRequestURI());
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.parseMediaType("application/problem+json")).body(body);
+  @ExceptionHandler({
+    MethodArgumentNotValidException.class,
+    HttpMessageNotReadableException.class,
+    MethodArgumentTypeMismatchException.class,
+    IllegalArgumentException.class
+  })
+  public ResponseEntity<Map<String, Object>> handleValidation(
+      Exception ex, HttpServletRequest request, HttpServletResponse response) {
+    return problem(AnalysisErrorCode.INVALID_REQUEST, request, response);
   }
 
-  @ExceptionHandler(IllegalArgumentException.class)
-  @ResponseBody
-  public ResponseEntity<Map<String, Object>> handleIllegalArgument(
-      IllegalArgumentException ex, HttpServletRequest req) {
-    Map<String, Object> body =
-        toProblem(HttpStatus.BAD_REQUEST, "Invalid request", ex.getMessage(), req.getRequestURI());
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .contentType(MediaType.parseMediaType("application/problem+json"))
-        .body(body);
+  @ExceptionHandler(EntityNotFoundException.class)
+  public ResponseEntity<Map<String, Object>> handleNotFound(
+      EntityNotFoundException ex, HttpServletRequest request, HttpServletResponse response) {
+    return problem(AnalysisErrorCode.ANALYSIS_NOT_FOUND, request, response);
   }
 
   @ExceptionHandler(TooManyRequestsException.class)
-  @ResponseBody
-  public ResponseEntity<Map<String, Object>> handleRateLimit(TooManyRequestsException ex, HttpServletRequest req) {
-    Map<String, Object> body = toProblem(HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests", ex.getMessage(), req.getRequestURI());
-    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).contentType(MediaType.parseMediaType("application/problem+json")).body(body);
+  public ResponseEntity<Map<String, Object>> handleRateLimit(
+      TooManyRequestsException ex, HttpServletRequest request, HttpServletResponse response) {
+    return problem(AnalysisErrorCode.RATE_LIMIT_EXCEEDED, request, response);
+  }
+
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<Map<String, Object>> handleMethod(
+      HttpRequestMethodNotSupportedException ex,
+      HttpServletRequest request,
+      HttpServletResponse response) {
+    response.setHeader(
+        "Allow",
+        String.join(
+            ", ", ex.getSupportedMethods() == null ? new String[0] : ex.getSupportedMethods()));
+    return problem(AnalysisErrorCode.METHOD_NOT_ALLOWED, request, response);
+  }
+
+  @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+  public ResponseEntity<Map<String, Object>> handleContentType(
+      HttpMediaTypeNotSupportedException ex,
+      HttpServletRequest request,
+      HttpServletResponse response) {
+    return problem(AnalysisErrorCode.UNSUPPORTED_MEDIA_TYPE, request, response);
+  }
+
+  @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+  public ResponseEntity<Map<String, Object>> handleAccept(
+      HttpMediaTypeNotAcceptableException ex,
+      HttpServletRequest request,
+      HttpServletResponse response) {
+    return problem(AnalysisErrorCode.NOT_ACCEPTABLE, request, response);
   }
 
   @ExceptionHandler(Exception.class)
-  @ResponseBody
-  public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex, HttpServletRequest req) {
-    Map<String, Object> body = toProblem(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", ex.getMessage(), req.getRequestURI());
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).contentType(MediaType.parseMediaType("application/problem+json")).body(body);
+  public ResponseEntity<Map<String, Object>> handleGeneric(
+      Exception ex, HttpServletRequest request, HttpServletResponse response) {
+    return problem(AnalysisErrorCode.INTERNAL_ERROR, request, response);
+  }
+
+  private ResponseEntity<Map<String, Object>> problem(
+      AnalysisErrorCode code, HttpServletRequest request, HttpServletResponse response) {
+    return ResponseEntity.status(code.status())
+        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+        .body(ApiProblem.create(code, request, response));
   }
 }
