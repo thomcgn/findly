@@ -1,139 +1,117 @@
-import type { DecisionResult, OfferInput } from "@/types/decision";
+import { z } from "zod";
+import {
+  problemSchema,
+  resultSchema,
+  startSchema,
+  statusResponseSchema,
+} from "@/types/analysis";
 
 const BACKEND_URL = (
   process.env.NEXT_PUBLIC_API_URL?.trim() || "http://localhost:8080"
 ).replace(/\/+$/, "");
-
-function toNumber(value: number | string | null | undefined): number {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
+const messages: Record<string, string> = {
+  INVALID_REQUEST: "Bitte überprüfe deine Eingabe.",
+  INVALID_URL: "Bitte gib eine gültige HTTPS-Kleinanzeigen-URL ein.",
+  ANALYSIS_NOT_FOUND: "Diese Analyse wurde nicht gefunden.",
+  RESULT_NOT_READY: "Das Ergebnis ist noch nicht verfügbar.",
+  ANALYSIS_FAILED: "Die Analyse konnte nicht abgeschlossen werden.",
+  ANALYSIS_TIMEOUT: "Die Analyse hat ihr Zeitlimit erreicht.",
+  ANALYSIS_QUEUE_FULL:
+    "Die Analyse-Warteschlange ist voll. Bitte versuche es später erneut.",
+  RATE_LIMIT_EXCEEDED: "Zu viele Anfragen. Bitte versuche es später erneut.",
+  LISTING_ACCESS_BLOCKED:
+    "Das Inserat ist gesperrt oder verlangt eine Zugriffsprüfung.",
+  LISTING_PARSE_FAILED: "Das Inserat konnte nicht ausgelesen werden.",
+  LISTING_TARGET_BLOCKED: "Diese Inseratsadresse ist nicht zulässig.",
+  LISTING_FETCH_FAILED: "Das Inserat konnte nicht abgerufen werden.",
+  INVALID_RESPONSE: "Der Server hat eine ungültige Antwort geliefert.",
+  NETWORK_ERROR: "Der Server ist nicht erreichbar. Bitte versuche es erneut.",
+};
+export class AnalysisApiError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly status = 0,
+    public readonly traceId?: string,
+    public readonly retryAfterMs?: number,
+  ) {
+    super(
+      messages[code] ??
+        "Die Anfrage konnte nicht abgeschlossen werden. Bitte versuche es erneut.",
+    );
+    this.name = "AnalysisApiError";
   }
-  return 0;
 }
-
-export async function analyzeOffer(input: Partial<OfferInput> = {}): Promise<DecisionResult> {
-  const normalizedUrl = (input.url ?? "").trim();
-  if (!normalizedUrl) {
-    throw new Error("Bitte gib eine Kleinanzeigen-URL ein.");
-  }
-
-  const createResponse = await fetch(`${BACKEND_URL}/api/analyses`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: normalizedUrl }),
-  });
-
-  if (!createResponse.ok) {
-    const message = await createResponse.text();
-    if (createResponse.status === 400) throw new Error(message || "Ungültige Anfrage: Bitte überprüfe die eingegebenen Daten.");
-    if (createResponse.status === 404) throw new Error(message || "Analyse-Endpunkt nicht gefunden.");
-    if (createResponse.status === 408) throw new Error(message || "Zeitüberschreitung beim Starten der Analyse.");
-    if (createResponse.status === 429) throw new Error(message || "Zu viele Anfragen. Bitte versuche es gleich erneut.");
-    if (createResponse.status >= 500) throw new Error(message || "Serverfehler beim Starten der Analyse.");
-    throw new Error(message || `Die Analyse konnte nicht gestartet werden (HTTP ${createResponse.status}).`);
-  }
-
-  const startData = (await createResponse.json()) as {
-    analysisId?: string;
-    id?: string;
-    status?: string;
-  };
-  const analysisId = startData.analysisId ?? startData.id;
-
-  if (!analysisId) {
-    throw new Error("Die Analyse wurde gestartet, aber die Antwort enthält keine Analyse-ID.");
-  }
-
-  const detailResponse = await fetch(`${BACKEND_URL}/api/analyses/${analysisId}`);
-  if (!detailResponse.ok) {
-    const message = await detailResponse.text();
-    if (detailResponse.status === 404) throw new Error(message || `Analyse ${analysisId} wurde nicht gefunden.`);
-    if (detailResponse.status === 408) throw new Error(message || "Zeitüberschreitung beim Laden der Analysedetails.");
-    if (detailResponse.status === 429) throw new Error(message || "Zu viele Anfragen beim Laden der Analysedetails.");
-    if (detailResponse.status >= 500) throw new Error(message || "Serverfehler beim Laden der Analysedetails.");
-    throw new Error(message || `Analysedetails konnten nicht geladen werden (HTTP ${detailResponse.status}).`);
-  }
-
-  const detail = (await detailResponse.json()) as {
-    id: string;
-    status?: string;
-    listing?: { title?: string; price?: number; currency?: string; url?: string; imageUrls?: string[] };
-    product?: { brand?: string; model?: string; category?: string; confidence?: number };
-    market?: { medianPrice?: number; lowestPrice?: number; highestPrice?: number };
-    deal?: { score?: string; differencePercent?: number };
-  };
-
-  if (!detail || typeof detail !== "object") {
-    throw new Error("Die Analysedetails haben ein ungültiges Format.");
-  }
-
-  if (!detail.id || typeof detail.id !== "string") {
-    throw new Error("Die Analysedetails enthalten keine gültige Analyse-ID.");
-  }
-
-  const askingPrice = toNumber(detail.listing?.price ?? input.askingPrice ?? 0);
-  const originalPrice = toNumber(detail.market?.highestPrice ?? input.originalPrice ?? detail.listing?.price ?? 0);
-  const marketMedian = toNumber(detail.market?.medianPrice ?? input.originalPrice ?? detail.listing?.price ?? 0);
-  const lowerBound = toNumber(detail.market?.lowestPrice ?? Math.max(0, marketMedian * 0.85));
-  const higherBound = toNumber(detail.market?.highestPrice ?? Math.max(0, marketMedian * 1.15));
-  const productHeadline = [detail.product?.brand, detail.product?.model, detail.product?.category]
-    .filter(Boolean)
-    .join(" ");
-  const priceDelta = marketMedian > 0 ? (askingPrice - marketMedian) / marketMedian : 0;
-  const dealScore = Math.max(0, Math.min(100, Math.round(100 - Math.abs(priceDelta) * 200)));
-  const transportCost = Math.max(0, Math.round((Math.abs((originalPrice || askingPrice) - askingPrice) * 0.15 + 15) * 100) / 100);
-  const effectivePurchasePrice = askingPrice + transportCost;
-  const effectiveSavings = Math.max(0, originalPrice - effectivePurchasePrice);
-  const savingsAgainstCurrentMarket = Math.max(0, marketMedian - effectivePurchasePrice);
-
-  let recommendation = "KANN SICH LOHNEN";
-  if (dealScore >= 75) recommendation = "JA – der Deal ist attraktiv";
-  else if (dealScore >= 50) recommendation = "KANN SICH LOHNEN – mit Vorsicht";
-  else if (dealScore >= 30) recommendation = "GRENZWERTIG";
-  else recommendation = "LOHNT SICH NICHT";
-
-  return {
-    id: detail.id ?? analysisId,
-    status: "LOHNT_SICH" as const,
-    headline: productHeadline || detail.listing?.title || "Verifizierte Angebotsanalyse",
-    imageUrl: detail.listing?.imageUrls?.[0] ?? undefined,
-    dealScore,
-    originalPrice,
-    currentMarketRange: { min: lowerBound, max: higherBound },
-    askingPrice,
-    transportCost,
-    transportMode: "Eigener Transport",
-    effectivePurchasePrice,
-    effectiveSavings,
-    savingsAgainstCurrentMarket,
-    distanceKm: 90,
-    roundTripDistanceKm: 180,
-    drivingTimeMinutes: 150,
-    timeCost: 0,
-    priceAdvantage: Math.max(0, originalPrice - askingPrice),
-    effectiveFinancialAdvantage: Math.max(0, originalPrice - effectivePurchasePrice),
-    advantageIncludingTime: Math.max(0, originalPrice - effectivePurchasePrice),
-    recommendation,
-    reasons: [
-      detail.product?.brand || detail.product?.model
-        ? `Erkanntes Produkt: ${[detail.product?.brand, detail.product?.model, detail.product?.category].filter(Boolean).join(" ")}`
-        : "Produkt wurde aus der Angebotsseite erkannt.",
-      detail.product?.confidence ? `Confidence: ${(detail.product.confidence * 100).toFixed(0)}%` : "Preisvergleich wurde anhand der eingegebenen Angebotsdaten durchgeführt.",
-      `Marktpreis: ${marketMedian.toFixed(0)} €`,
-    ],
-    warnings: detail.deal?.score ? [`Bewertung: ${detail.deal.score}`] : [],
-    transportOptions: [
-      {
-        provider: "Eigenes Fahrzeug",
-        vehicleName: input.vehicle?.name || "Eigenes Auto",
-        totalEstimatedCost: transportCost,
-        distanceKm: 90,
-        routeType: "Hin- und Rückfahrt",
-        notes: "Basisannahme für lokale Transportkosten",
-        mode: "OWN_CAR",
+export function errorMessage(error: unknown): string {
+  return error instanceof AnalysisApiError
+    ? error.message
+    : "Die Anfrage konnte nicht abgeschlossen werden. Bitte versuche es erneut.";
+}
+async function request<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  signal: AbortSignal,
+  body?: { url: string },
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_URL}/api/analyses${path}`, {
+      method: body ? "POST" : "GET",
+      signal,
+      cache: "no-store",
+      headers: {
+        Accept: "application/json, application/problem+json",
+        ...(body ? { "Content-Type": "application/json" } : {}),
       },
-    ],
-  };
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    throw new AnalysisApiError("NETWORK_ERROR");
+  }
+  const data: unknown = await response.json().catch(() => null);
+  signal.throwIfAborted();
+  if (!response.ok) {
+    const problem = problemSchema.safeParse(data);
+    const retryHeader = response.headers.get("Retry-After");
+    const retry =
+      retryHeader === null
+        ? NaN
+        : /^\d+$/.test(retryHeader)
+          ? Number(retryHeader) * 1000
+          : Date.parse(retryHeader) - Date.now();
+    throw new AnalysisApiError(
+      problem.success
+        ? problem.data.code
+        : response.status === 429
+          ? "RATE_LIMIT_EXCEEDED"
+          : "REQUEST_FAILED",
+      response.status,
+      problem.success ? problem.data.traceId : undefined,
+      Number.isFinite(retry) ? Math.max(0, retry) : undefined,
+    );
+  }
+  const parsed = schema.safeParse(data);
+  if (!parsed.success)
+    throw new AnalysisApiError("INVALID_RESPONSE", response.status);
+  return parsed.data;
 }
+function path(id: string) {
+  if (!z.string().uuid().safeParse(id).success)
+    throw new AnalysisApiError("ANALYSIS_NOT_FOUND", 404);
+  return `/${id}`;
+}
+export const startAnalysis = (url: string, signal: AbortSignal) =>
+  request("", startSchema, signal, { url: url.trim() });
+function sameAnalysis<T extends { id: string }>(id: string, value: T): T {
+  if (value.id.toLowerCase() !== id.toLowerCase())
+    throw new AnalysisApiError("INVALID_RESPONSE");
+  return value;
+}
+export const getAnalysisStatus = (id: string, signal: AbortSignal) =>
+  request(path(id), statusResponseSchema, signal).then((value) =>
+    sameAnalysis(id, value),
+  );
+export const getAnalysisResult = (id: string, signal: AbortSignal) =>
+  request(`${path(id)}/result`, resultSchema, signal).then((value) =>
+    sameAnalysis(id, value),
+  );

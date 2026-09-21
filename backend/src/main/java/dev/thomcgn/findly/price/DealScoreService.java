@@ -3,13 +3,16 @@ package dev.thomcgn.findly.price;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
+@org.springframework.stereotype.Service
 public class DealScoreService {
 
   public static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
   public String classify(BigDecimal listingPrice, BigDecimal marketPrice) {
-    if (marketPrice == null || marketPrice.compareTo(BigDecimal.ZERO) == 0) {
-      return "FAIR";
+    if (listingPrice == null
+        || marketPrice == null
+        || marketPrice.compareTo(BigDecimal.ZERO) <= 0) {
+      return null;
     }
 
     BigDecimal differencePercent =
@@ -34,8 +37,10 @@ public class DealScoreService {
   }
 
   public BigDecimal calculateDifferencePercent(BigDecimal listingPrice, BigDecimal marketPrice) {
-    if (marketPrice == null || marketPrice.compareTo(BigDecimal.ZERO) == 0) {
-      return BigDecimal.ZERO;
+    if (listingPrice == null
+        || marketPrice == null
+        || marketPrice.compareTo(BigDecimal.ZERO) <= 0) {
+      return null;
     }
     return listingPrice
         .subtract(marketPrice)

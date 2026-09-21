@@ -1,101 +1,114 @@
 package dev.thomcgn.findly.analysis;
 
-import dev.thomcgn.findly.listing.Listing;
-import dev.thomcgn.findly.listing.ListingFetchResult;
+import dev.thomcgn.findly.error.AnalysisErrorCode;
+import dev.thomcgn.findly.error.AnalysisException;
 import dev.thomcgn.findly.listing.ListingFetchService;
-import dev.thomcgn.findly.price.DealScoreService;
+import dev.thomcgn.findly.listing.ListingParser;
 import dev.thomcgn.findly.price.PriceResearchService;
-import dev.thomcgn.findly.price.PriceSource;
-import dev.thomcgn.findly.product.IdentifiedProduct;
 import dev.thomcgn.findly.product.ProductIdentificationService;
-import jakarta.persistence.EntityNotFoundException;
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.List;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.UUID;
-import org.springframework.scheduling.annotation.Async;
+import java.util.concurrent.Executor;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class AnalysisProcessingService {
-
-  private final AnalysisRepository analysisRepository;
-  private final ProductIdentificationService productIdentificationService;
-  private final PriceResearchService priceResearchService;
-  private final ListingFetchService listingFetchService;
-  private final DealScoreService dealScoreService = new DealScoreService();
+  private final AnalysisStatusService statuses;
+  private final ListingFetchService fetcher;
+  private final ListingParser parser;
+  private final ProductIdentificationService products;
+  private final PriceResearchService prices;
+  private final Executor executor;
+  private final ScheduledExecutorService deadlines;
+  private final Clock clock;
 
   public AnalysisProcessingService(
-      AnalysisRepository analysisRepository,
-      ProductIdentificationService productIdentificationService,
-      PriceResearchService priceResearchService,
-      ListingFetchService listingFetchService) {
-    this.analysisRepository = analysisRepository;
-    this.productIdentificationService = productIdentificationService;
-    this.priceResearchService = priceResearchService;
-    this.listingFetchService = listingFetchService;
+      AnalysisStatusService statuses,
+      ListingFetchService fetcher,
+      ListingParser parser,
+      ProductIdentificationService products,
+      PriceResearchService prices,
+      @Qualifier("analysisTaskExecutor") Executor executor,
+      ScheduledExecutorService deadlines,
+      Clock clock) {
+    this.statuses = statuses;
+    this.fetcher = fetcher;
+    this.parser = parser;
+    this.products = products;
+    this.prices = prices;
+    this.executor = executor;
+    this.deadlines = deadlines;
+    this.clock = clock;
   }
 
-  @Async("analysisTaskExecutor")
-  public void processAnalysisAsync(UUID analysisId, String rawUrl) {
-    processAnalysis(analysisId, rawUrl);
-  }
-
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void processAnalysis(UUID analysisId, String rawUrl) {
-    Analysis analysis =
-        analysisRepository
-            .findById(analysisId)
-            .orElseThrow(() -> new EntityNotFoundException("Analysis not found: " + analysisId));
-
+  public void schedule(AnalysisStatusService.Job job) {
+    AtomicReference<ScheduledFuture<?>> deadline = new AtomicReference<>();
+    FutureTask<Void> task =
+        new FutureTask<>(
+            () -> {
+              try {
+                process(job.id(), job.url());
+              } finally {
+                var timer = deadline.get();
+                if (timer != null) timer.cancel(false);
+              }
+              return null;
+            });
     try {
-      analysis.setStatus(AnalysisStatus.ANALYZING);
-      analysis.setProgress(10);
-      analysis.setStartedAt(Instant.now());
-      analysis.setErrorCode(null);
-      analysis.setErrorMessage(null);
-      analysisRepository.save(analysis);
-
-      ListingFetchResult listingFetchResult = listingFetchService.fetch(rawUrl);
-      BigDecimal listingPrice = listingFetchResult.price();
-      Listing listing =
-          Listing.builder()
-              .analysis(analysis)
-              .externalUrl(rawUrl)
-              .title(listingFetchResult.title())
-              .description(listingFetchResult.description())
-              .listingPrice(listingPrice)
-              .currency(listingFetchResult.currency())
-              .imageUrls(new java.util.ArrayList<>(listingFetchResult.imageUrls()))
-              .build();
-      analysis.setListing(listing);
-      analysis.setProgress(40);
-      analysisRepository.save(analysis);
-
-      IdentifiedProduct product = productIdentificationService.identify(analysis, listing);
-      analysis.setIdentifiedProduct(product);
-      analysis.setProgress(70);
-      analysisRepository.save(analysis);
-
-      List<PriceSource> priceSources = priceResearchService.findComparablePrices(analysis);
-      priceSources.forEach(priceSource -> priceSource.setAnalysis(analysis));
-      analysis.setPriceSources(new java.util.ArrayList<>(priceSources));
-      analysis.setProgress(90);
-      analysisRepository.save(analysis);
-
-      analysis.setStatus(AnalysisStatus.COMPLETED);
-      analysis.setProgress(100);
-      analysis.setCompletedAt(Instant.now());
-      analysisRepository.save(analysis);
-    } catch (Exception ex) {
-      analysis.setStatus(AnalysisStatus.FAILED);
-      analysis.setProgress(100);
-      analysis.setFailedAt(Instant.now());
-      analysis.setErrorCode("ANALYSIS_FAILED");
-      analysis.setErrorMessage(ex.getMessage());
-      analysisRepository.save(analysis);
+      var timer =
+          deadlines.schedule(
+              () -> {
+                try {
+                  statuses.fail(job.id(), AnalysisErrorCode.ANALYSIS_TIMEOUT);
+                } finally {
+                  task.cancel(true);
+                }
+              },
+              Math.max(0, Duration.between(clock.instant(), job.deadline()).toMillis()),
+              TimeUnit.MILLISECONDS);
+      deadline.set(timer);
+      executor.execute(task);
+      if (task.isDone()) timer.cancel(false);
+    } catch (RejectedExecutionException ex) {
+      task.cancel(true);
+      var timer = deadline.get();
+      if (timer != null) timer.cancel(false);
+      statuses.fail(job.id(), AnalysisErrorCode.ANALYSIS_QUEUE_FULL);
+      throw new AnalysisException(AnalysisErrorCode.ANALYSIS_QUEUE_FULL);
     }
+  }
+
+  public void process(UUID id, String url) {
+    if (TransactionSynchronizationManager.isActualTransactionActive())
+      throw new IllegalStateException("Analysis orchestration must not run in a transaction");
+    try {
+      if (!statuses.claim(id)) return;
+      String html = fetcher.fetchHtml(url);
+      statuses.extracting(id);
+      var data = parser.parse(html);
+      statuses.storeListing(id, data);
+      var identification = products.identify(data);
+      statuses.storeIdentification(id, identification);
+      statuses.complete(id, prices.research(identification.selected()));
+    } catch (AnalysisException ex) {
+      statuses.fail(id, ex.code());
+    } catch (RuntimeException ex) {
+      statuses.fail(id, AnalysisErrorCode.ANALYSIS_FAILED);
+    }
+  }
+
+  @Scheduled(fixedDelay = 1000)
+  public void expireOverdue() {
+    statuses.expireOverdue();
   }
 }

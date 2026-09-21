@@ -15,7 +15,7 @@ export default function Home() {
               </h1>
             </div>
             <div className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
-              Produktidentifikation • Preisvergleich • Confidence Score
+              Produktidentifikation • Preisvergleich • Quellen
             </div>
           </div>
         </header>

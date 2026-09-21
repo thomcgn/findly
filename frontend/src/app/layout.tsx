@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Findly | Offer Analysis MVP",
-  description: "Produktidentifikation, Preisvergleich und Deal Score für Kleinanzeigen-Angebote.",
+  description: "Evidenzbasierte Produktidentifikation und Preisvergleich für Kleinanzeigen-Angebote.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

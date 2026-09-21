@@ -11,12 +11,38 @@ public enum AnalysisErrorCode {
   RESULT_NOT_READY(HttpStatus.CONFLICT, "Result not ready", "The analysis has not finished yet."),
   ANALYSIS_FAILED(
       HttpStatus.UNPROCESSABLE_CONTENT, "Analysis failed", "The analysis could not be completed."),
+  ANALYSIS_QUEUE_FULL(
+      HttpStatus.TOO_MANY_REQUESTS,
+      "Analysis queue full",
+      "The analysis queue is full. Please retry later."),
   RATE_LIMIT_EXCEEDED(
       HttpStatus.TOO_MANY_REQUESTS,
       "Too Many Requests",
       "The request limit has been exceeded. Please retry later."),
   LISTING_FETCH_FAILED(
       HttpStatus.BAD_GATEWAY, "Listing fetch failed", "The listing provider could not be reached."),
+  LISTING_TARGET_BLOCKED(
+      HttpStatus.UNPROCESSABLE_CONTENT,
+      "Listing target blocked",
+      "The listing target is not permitted."),
+  LISTING_REDIRECT_FAILED(
+      HttpStatus.BAD_GATEWAY,
+      "Listing redirect failed",
+      "The listing redirect is invalid or exceeds the limit."),
+  LISTING_TOO_LARGE(
+      HttpStatus.BAD_GATEWAY, "Listing too large", "The listing exceeds the response size limit."),
+  LISTING_CONTENT_UNSUPPORTED(
+      HttpStatus.BAD_GATEWAY,
+      "Unsupported listing content",
+      "The listing did not return supported HTML."),
+  LISTING_ACCESS_BLOCKED(
+      HttpStatus.UNPROCESSABLE_CONTENT,
+      "Listing access blocked",
+      "The listing requires access verification or is unavailable."),
+  LISTING_PARSE_FAILED(
+      HttpStatus.UNPROCESSABLE_CONTENT,
+      "Listing parsing failed",
+      "The listing could not be extracted."),
   ANALYSIS_TIMEOUT(
       HttpStatus.GATEWAY_TIMEOUT, "Analysis timed out", "The analysis exceeded its time limit."),
   METHOD_NOT_ALLOWED(

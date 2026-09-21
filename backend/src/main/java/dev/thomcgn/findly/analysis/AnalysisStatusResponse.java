@@ -13,4 +13,9 @@ public record AnalysisStatusResponse(
     Instant completedAt,
     Instant failedAt,
     String errorCode,
-    String errorMessage) {}
+    String errorMessage,
+    java.util.List<String> warnings) {
+  public AnalysisStatusResponse {
+    warnings = java.util.List.copyOf(warnings);
+  }
+}

@@ -45,7 +45,7 @@ class AnalysisControllerTest {
   void createAnalysis_withValidUrl_returnsAccepted() throws Exception {
     UUID analysisId = UUID.randomUUID();
     when(analysisService.createAnalysis(anyString()))
-        .thenReturn(new AnalysisStartResponse(analysisId, AnalysisStatus.PENDING));
+        .thenReturn(new AnalysisStartResponse(analysisId, AnalysisStatus.CREATED));
 
     mockMvc
         .perform(
@@ -54,7 +54,7 @@ class AnalysisControllerTest {
                 .content("{\"url\":\"https://www.kleinanzeigen.de/s-anzeige/test\"}"))
         .andExpect(status().isAccepted())
         .andExpect(jsonPath("$.id").value(analysisId.toString()))
-        .andExpect(jsonPath("$.status").value("PENDING"));
+        .andExpect(jsonPath("$.status").value("CREATED"));
   }
 
   @Test
@@ -64,7 +64,7 @@ class AnalysisControllerTest {
         .thenReturn(
             new AnalysisStatusResponse(
                 analysisId,
-                AnalysisStatus.ANALYZING,
+                AnalysisStatus.FETCHING_LISTING,
                 42,
                 java.time.Instant.now(),
                 java.time.Instant.now(),
@@ -72,12 +72,13 @@ class AnalysisControllerTest {
                 null,
                 null,
                 null,
-                null));
+                null,
+                java.util.List.of()));
 
     mockMvc
         .perform(get("/api/analyses/{id}", analysisId))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("ANALYZING"))
+        .andExpect(jsonPath("$.status").value("FETCHING_LISTING"))
         .andExpect(jsonPath("$.progress").value(42));
   }
 
@@ -101,8 +102,8 @@ class AnalysisControllerTest {
                     java.math.BigDecimal.valueOf(200),
                     java.math.BigDecimal.valueOf(190),
                     java.math.BigDecimal.valueOf(220)),
-                new AnalysisDetailResponse.DealSummary(
-                    "good", java.math.BigDecimal.valueOf(10.0))));
+                new AnalysisDetailResponse.DealSummary("good", java.math.BigDecimal.valueOf(10.0)),
+                java.util.List.of()));
 
     mockMvc
         .perform(get("/api/analyses/{id}/result", analysisId))
@@ -129,7 +130,7 @@ class AnalysisControllerTest {
   @Test
   void createAnalysis_whenRateLimitExceeded_returns429ProblemDetails() throws Exception {
     when(analysisService.createAnalysis(anyString()))
-        .thenReturn(new AnalysisStartResponse(UUID.randomUUID(), AnalysisStatus.PENDING));
+        .thenReturn(new AnalysisStartResponse(UUID.randomUUID(), AnalysisStatus.CREATED));
 
     String body = "{\"url\":\"https://www.kleinanzeigen.de/s-anzeige/test\"}";
     for (int i = 0; i < 20; i++) {

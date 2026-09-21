@@ -50,12 +50,11 @@ public class Listing {
   @Column(length = 10000)
   private String description;
 
-  @Column(name = "listing_price", nullable = false, precision = 10, scale = 2)
+  @Column(name = "listing_price", precision = 10, scale = 2)
   private BigDecimal listingPrice;
 
-  @Column(nullable = false, length = 10)
-  @Builder.Default
-  private String currency = "EUR";
+  @Column(length = 10)
+  private String currency;
 
   @ElementCollection(fetch = FetchType.EAGER)
   @CollectionTable(name = "listing_image_urls", joinColumns = @JoinColumn(name = "listing_id"))

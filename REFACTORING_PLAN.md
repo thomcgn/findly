@@ -2,6 +2,170 @@
 
 Stand der Prüfung: 2026-09-12, Branch `master`, Commit `94bea417e907d597fa48795f6184c6e440685b21`.
 
+## Fortschritt am 2026-09-19 – Schritt 8
+
+- Formular auf die tatsächlich unterstützte Inserats-URL reduziert; leere
+  Eingabe statt Mock-Vorgaben. Start erfolgt einmalig per POST mit anschließendem
+  Wechsel nach `/results/{id}`. Die Ergebnisseite unterstützt Direktaufruf und
+  Neuladen ohne erneuten Analyseauftrag.
+- Gemeinsamer Vertrag in `frontend/src/types/analysis.ts`: Zod validiert Antworten
+  zur Laufzeit und leitet TypeScript-Typen daraus ab. Detaillierte Backend-Status,
+  Nullwerte, Kandidaten, Extraktions-/Preisbelege und Vergleiche sind abgebildet.
+  Fehlerhafte Antworten und fremde Analyse-IDs werden abgewiesen.
+- Sequenzielles Status-Polling mit 1/2/5 Sekunden Backoff (danach 5 Sekunden).
+  `COMPLETED` lädt `/result`, `FAILED` beendet Polling. 429 berücksichtigt
+  `Retry-After`, 409 führt zurück zur Statusabfrage. AbortController beendet
+  laufende Requests und Timer beim Seitenwechsel; verspätete Antworten können
+  keine andere Analyse überschreiben. Lesefehler bieten einen erneuten Abruf
+  derselben Analyse statt eines weiteren POST.
+- Problem Details werden strukturiert ausgewertet und über stabile Codes
+  lokalisiert; rohe Antworttexte und interne Fehlermeldungen erscheinen nicht
+  im UI. Trace-IDs bleiben für die Fehlersuche sichtbar.
+- Synthetische Marktwerte, Deal-Scores, Transportkosten, Distanzen, Fahrzeug-
+  Defaults und Kaufempfehlungen vollständig aus dem Frontend entfernt, alte
+  Mock-Datei und Decision-Typen gelöscht. Fehlende Werte heißen „Unbekannt“.
+  Originalpreis, historischer Originalpreis und Gebrauchtmarkt bleiben getrennt;
+  vorzeichenbehaftete Ersparnis/Aufpreis stammen ausschließlich vom Backend.
+- Kandidaten unter 75 %, fehlende eindeutige Zuordnung, Identifier-Konflikte,
+  Einzel-Scores, Gewichte und Warnungen werden dargestellt. Quellen nennen
+  Abrufzeit und Confidence, erlauben nur HTTPS-Links und öffnen ohne Opener-
+  Zugriff. Transport/Kaufentscheidung ist ausdrücklich noch nicht verfügbar.
+- Vitest/React Testing Library eingerichtet und in Frontend-CI aufgenommen.
+  19 Tests prüfen API-Vertrag, Fehlerredaktion, Navigation, Polling-Abstände,
+  Terminalzustände, Rate Limits, Abbruch, späte Antworten, doppelte Starts,
+  Nullwerte, unsichere Kandidaten, Quellenlinks und negative Ersparnis.
+
+Verifikation: Lokale Lint-/TypeScript-Prüfung und 19 Tests erfolgreich. Derselbe
+Quellstand besteht im Node-20-Container zusätzlich den Next.js-Produktionsbuild;
+Lint, TypeScript, Tests und Build melden dort keine Warnungen. Der gestartete
+Produktionsserver liefert `/` und `/results/{id}` mit HTTP 200 und passendem
+Seiteninhalt; `git diff --check` besteht ebenfalls. Der lokale
+Turbopack-Build ist weiterhin durch die Portbindungsbeschränkung der Umgebung
+blockiert. Bei `npm ci` bleibt die bekannte Deprecation-Warnung zu ESLint 9;
+lokal zusätzlich die Installationsskript-Warnung zu unrs-resolver. Keine Regeln
+oder Tests deaktiviert. Backend und vollständiger Compose-Stack wurden für diese
+Frontend-Phase nicht erneut abgenommen. Reale Provider-Adapter bleiben offen.
+
+Nächster fachlicher Schritt ist Schritt 9: das persönliche „Lohnt sich“-Modul
+mit tatsächlichen Eingaben und belegten Routing-/Fahrzeug-/Miet-/Kraftstoffdaten.
+Ohne diese Daten bleiben Transportkosten und Empfehlungen unbekannt.
+
+## Fortschritt am 2026-09-19 – Schritt 7
+
+- V7 ergänzt Product, ExtractedAttribute, ProductMatch und PriceEvidence als
+  persistierte, typisierte JSONB-Evidenz-Snapshots. Kandidaten behalten Quellen,
+  Attribute, Einzel-Scores, angewandte Gewichte und Rang. Ein partieller Unique-
+  Index erzwingt höchstens ein ausgewähltes Match pro Analyse.
+- Konfigurierbares gewichtetes Matching mit Normalisierung fehlender Merkmale,
+  Unicode-/Textnormalisierung, EAN-8-/EAN-13-Prüfziffern und markengebundenen SKUs.
+  Auswahl ab 0,75 mit mindestens 0,10 Abstand; beide Grenzwerte inklusive und
+  nur nach oben konfigurierbar. Identifier-/Markenkonflikte verhindern Auswahl;
+  Marke/Kategorie allein genügen nicht. Unbelegte Kandidatenfelder zählen nicht
+  als Übereinstimmung. Confidence beschreibt Evidenzübereinstimmung, keine
+  kalibrierte Wahrscheinlichkeit.
+- Preisvalidierung akzeptiert ausschließlich vollständige positive Beträge mit
+  ISO-Währung, HTTPS-Quelle, Abruf innerhalb der letzten 30 Tage, Preisart,
+  Confidence >= 0,75 und expliziter Quellenklasse. Original-/historische Preise
+  priorisieren Hersteller, aktuelle Gebrauchtpreise Marktplätze; nur die beste
+  vorhandene Quellenklasse derselben Preisart/Währung fließt in den Median ein.
+- Ergebnisvertrag um Kandidaten, Extraktionsbelege, Preisbelege und getrennte
+  Vergleiche erweitert. Ersparnis bleibt vorzeichenbehaftet; negative Werte
+  heißen `SURCHARGE`. Fremdwährungen werden nicht verrechnet, unbekannte Werte
+  bleiben null. Alte synthetische Ergebnisse bleiben als unverifiziert markiert.
+- Deterministische Tests für Scores/Gewichte, Grenzwerte, Abstand, Identifier,
+  fehlende/widersprüchliche Evidenz und Preisakzeptanz. PostgreSQL-Workflow-Test
+  prüft Provider ohne Transaktion, Persistenz, API-Ausgabe und Aufpreis; Flyway-
+  Upgrade-Test prüft den partiellen Unique-Index und unvollständige Preisbelege.
+
+Backend-Abnahmelauf: `DOCKER_HOST=unix:///var/run/docker.sock ./mvnw -B spotless:apply clean verify`
+erfolgreich mit **166 Tests, 0 Fehlern, 0 übersprungenen Tests**, Enforcer, Spotless
+und SpotBugs. `git diff --check` ebenfalls erfolgreich. Bekannte Java-/Dependency-
+und Entwicklungsbenutzer-Warnungen bleiben offen; keine Quality Gates oder Tests
+wurden deaktiviert. Die warning-freie Gesamtabnahme bleibt deshalb offen.
+
+Nächster fachlicher Schritt ist Schritt 8 (Frontend-Vertrag,
+Polling, Nullwerte, Kandidaten/Quellen und Entfernung clientseitiger Fake-Werte).
+Reale Provider-Adapter bleiben offen; die Standardkonfiguration erfindet weiterhin
+keine Produkte oder Preise. Frontend und Compose wurden in Schritt 7 nicht geändert.
+
+## Fortschritt am 2026-09-19 – Schritte 4, 5 und 6
+
+Schritt 4 – Listing-Client:
+
+- Apache HttpClient verwendet einen prüfenden Resolver direkt im Socket-Connector;
+  validierte Adressobjekte werden an den Verbindungsaufbau gebunden. Private,
+  Loopback-, Link-Local-, Multicast-, unspecified und weitere nicht öffentliche
+  IPv4-/IPv6-Adressen sowie gemischte DNS-Antworten werden abgelehnt. Die normale
+  TLS-Zertifikats- und Hostnamenprüfung bleibt aktiv.
+- Maximal drei vollständig neu validierte Redirects, keine automatischen
+  Redirects/Retry-/Cookie-/Kompressionsmechanismen. Verbindungen werden je Hop
+  neu aufgebaut; Redirect-Bodies werden nicht vollständig eingelesen.
+- Validierte Konfiguration für Connect-/Read-Timeout und maximal 10 MiB.
+  Streaming-Abbruch nach Limit + 1 Byte und zusätzliche absolute Request-Deadline
+  verhindern unbegrenzte Downloads bzw. endloses Tröpfeln von Antwortdaten.
+- Jsoup ersetzt HTML-Regexes. Konkrete Inseratsfelder, Produkt-JSON-LD und Meta-Daten
+  liefern Evidenz; Beschreibungsbeträge oder Neupreise werden nicht als Kaufpreis
+  übernommen. Fehlende, ungültige oder widersprüchliche Preise/Währungen bleiben
+  `null`. Blockierte Zugriffe und Parserfehler erhalten stabile Fehlercodes.
+
+Schritt 5 – asynchrone Verarbeitung:
+
+- Start persistiert URL, `CREATED` und Fünf-Minuten-Deadline in einer abgeschlossenen
+  kurzen Transaktion, bevor Scheduling erfolgt. Executor: Core 2, Max 4, Queue 20,
+  `AbortPolicy`; volle Queues liefern 429 und hinterlassen einen dauerhaft
+  fehlgeschlagenen Job statt Arbeit im Request-Thread auszuführen.
+- `AnalysisStatusService` übernimmt Status-/Ergebnisschreibzugriffe in separaten
+  `REQUIRES_NEW`-Transaktionen. Atomarer Claim unter Zeilensperre verhindert doppelte
+  Verarbeitung; HTTP-/Provider-Aufrufe liegen außerhalb dieser Transaktionen.
+- Statusfolge: `CREATED → FETCHING_LISTING → EXTRACTING_LISTING →
+  IDENTIFYING_PRODUCT → RESEARCHING_PRICES → COMPLETED`; Fehler sind aus jedem
+  nichtterminalen Zustand möglich. Das tatsächliche `MVP.md` enthält weiterhin nur
+  die alten Grobzustände; die Zwischenzustände konkretisieren hier den Plan.
+- Deadline umfasst Wartezeit in der Queue. Timer unterbrechen Jobs; ein DB-Sweep
+  markiert abgelaufene Jobs auch nach Neustart. Keine automatische Wiederaufnahme:
+  unterbrochene Jobs bleiben bis zur ursprünglichen Deadline nachvollziehbar und
+  werden dann `FAILED`. Späte Antworten überschreiben keine terminalen Zustände.
+- Neue Migrationen V3–V5 für unbekannte Inseratspreise/Währungen, URL/Deadline,
+  Statusumstellung und persistierte Warnungen; vorhandene Migrationen unverändert.
+
+Schritt 6 – Provider ohne erfundene Ergebnisse:
+
+- OCR-, Vision-, Search- und Pricing-Schnittstellen mit unveränderlichen Domain-DTOs
+  statt JPA-Entities. Typisierte, validierte Konfiguration und bedingte Beans;
+  `DISABLED` und `LOCAL_STUB` liefern ausschließlich `UNAVAILABLE` ohne Treffer.
+- Keyword-Modellzuordnungen, feste Confidence-Werte und synthetische Preisbänder
+  aus den Backend-Services entfernt. Bild-URLs sind keine analysierten Bildinhalte.
+  Ohne ausgewähltes Produkt erfolgt kein Pricing-Aufruf; Suchtreffer werden vor
+  Implementierung des Matchers nicht als eindeutige Identifikation ausgegeben.
+- Erfolgreich extrahierte Inserate können als Teilergebnis `COMPLETED` werden:
+  Produkt, Marktpreise und Deal bleiben unbekannt; persistierte Warnungen enthalten
+  u. a. `SEARCH_UNAVAILABLE`, `PRODUCT_NOT_IDENTIFIED` und `PRICE_NOT_VERIFIED`.
+  Abruf-/Parsingfehler bleiben `FAILED`; COMPLETED ohne Inseratsergebnis ist verboten.
+- V6 markiert historische abgeschlossene Ergebnisse als `LEGACY_RESULT_UNVERIFIED`.
+  Historische Daten bleiben erhalten, ihre synthetischen Produkt-/Preisbehauptungen
+  werden vom Ergebnis-Endpunkt aber nicht als Evidenz ausgegeben.
+
+Tests umfassen lokale HTTP-Fixtures (JDK-Testserver, keine Live-Webseiten),
+DNS-/Redirect-/Größen-/Timeoutfälle, Parser- und Provider-DTO-Validierung,
+PostgreSQL-/Flyway-Upgrades, HTTP 202 vor Abschluss eines blockierten Abrufs,
+Transaktionsfreiheit der Provider, konkurrierende Claims, Queue-Überlauf,
+Deadline-Unterbrechung, terminale Zustände und Teilergebnisse ohne API-Keys.
+
+Abnahmelauf: `DOCKER_HOST=unix:///var/run/docker.sock ./mvnw -B spotless:apply clean verify`
+erfolgreich mit **151 Tests, 0 Fehlern und 0 übersprungenen Tests**; Enforcer,
+Spotless und SpotBugs bestanden. `git diff --check` ebenfalls erfolgreich. Der
+Docker-Socket wurde pro Befehl gesetzt, weil der voreingestellte Desktop-Kontext
+nach dem Umgebungsneustart nicht lief; globale Docker-Einstellungen unverändert.
+Frontend und vollständiger Compose-Stack wurden für diese Backend-Änderungen
+nicht erneut abgenommen.
+
+Zum Abschluss von Schritten 4–6 offen waren Schritt 7 (inzwischen siehe oben), reale
+Provider-Adapter und Schritt 8 (Frontend-Polling, neuer Vertrag, Nullwerte und
+Entfernung clientseitiger Fake-Berechnungen). Bekannte Toolchain-/Dependency-
+Warnungen verhindern weiterhin die warning-freie Gesamtabnahme. OS-DNS-Auflösung
+kann trotz Job-Abbruch bis zum Resolver-Timeout blockieren; die persistierte
+Deadline und der Schutz vor verspäteten Ergebnissen bleiben wirksam.
+
 ## Fortschritt am 2026-09-19 – API-Fehlervertrag und URL-Validierung
 
 Die fachlichen Änderungen aus Schritt 3 sind umgesetzt:

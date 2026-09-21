@@ -5,9 +5,6 @@ import static org.mockito.Mockito.*;
 
 import dev.thomcgn.findly.error.AnalysisErrorCode;
 import dev.thomcgn.findly.error.AnalysisException;
-import dev.thomcgn.findly.listing.ListingFetchService;
-import dev.thomcgn.findly.price.PriceResearchService;
-import dev.thomcgn.findly.product.ProductIdentificationService;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -18,12 +15,7 @@ class AnalysisServiceContractTest {
   private final AnalysisRepository repository = mock(AnalysisRepository.class);
   private final AnalysisProcessingService processor = mock(AnalysisProcessingService.class);
   private final AnalysisService service =
-      new AnalysisService(
-          repository,
-          processor,
-          mock(ProductIdentificationService.class),
-          mock(PriceResearchService.class),
-          mock(ListingFetchService.class));
+      new AnalysisService(repository, processor, mock(AnalysisStatusService.class));
 
   @Test
   void rejectsUrlBeforePersistingOrScheduling() {
@@ -33,8 +25,8 @@ class AnalysisServiceContractTest {
 
   @ParameterizedTest
   @CsvSource({
-    "PENDING,,RESULT_NOT_READY",
-    "ANALYZING,,RESULT_NOT_READY",
+    "CREATED,,RESULT_NOT_READY",
+    "FETCHING_LISTING,,RESULT_NOT_READY",
     "FAILED,,ANALYSIS_FAILED",
     "FAILED,INTERNAL_SECRET,ANALYSIS_FAILED",
     "FAILED,LISTING_FETCH_FAILED,LISTING_FETCH_FAILED",
@@ -73,5 +65,39 @@ class AnalysisServiceContractTest {
     var status = service.getAnalysisStatus(id);
     assertEquals("ANALYSIS_FAILED", status.errorCode());
     assertEquals(AnalysisErrorCode.ANALYSIS_FAILED.detail(), status.errorMessage());
+  }
+
+  @Test
+  void legacySyntheticResultsAreNotPresentedAsEvidence() {
+    UUID id = UUID.randomUUID();
+    Analysis legacy =
+        Analysis.builder()
+            .id(id)
+            .status(AnalysisStatus.COMPLETED)
+            .warnings(java.util.List.of("LEGACY_RESULT_UNVERIFIED"))
+            .listing(
+                dev.thomcgn.findly.listing.Listing.builder()
+                    .title("Legacy")
+                    .listingPrice(java.math.BigDecimal.valueOf(149))
+                    .currency("EUR")
+                    .externalUrl("https://kleinanzeigen.de/legacy")
+                    .build())
+            .identifiedProduct(
+                dev.thomcgn.findly.product.IdentifiedProduct.builder()
+                    .model("Invented model")
+                    .build())
+            .priceSources(
+                java.util.List.of(
+                    dev.thomcgn.findly.price.PriceSource.builder()
+                        .price(java.math.BigDecimal.valueOf(171.35))
+                        .build()))
+            .build();
+    when(repository.findById(id)).thenReturn(Optional.of(legacy));
+    var result = service.getAnalysis(id);
+    assertNull(result.product());
+    assertNull(result.listing().price());
+    assertNull(result.market().medianPrice());
+    assertNull(result.deal().score());
+    assertTrue(result.warnings().contains("LEGACY_RESULT_UNVERIFIED"));
   }
 }

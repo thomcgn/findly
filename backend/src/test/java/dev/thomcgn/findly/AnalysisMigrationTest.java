@@ -36,18 +36,18 @@ class AnalysisMigrationTest {
           "INSERT INTO analysis (status) VALUES ('PENDING'), ('COMPLETED'), ('FAILED')");
 
       var flyway = configuration.target("latest").load();
-      assertEquals(1, flyway.migrate().migrationsExecuted);
+      assertEquals(6, flyway.migrate().migrationsExecuted);
       flyway.validate();
       assertEquals(0, flyway.migrate().migrationsExecuted);
 
       try (var rows =
           statement.executeQuery(
               "SELECT status, version, progress, started_at, failed_at, error_code, error_message FROM analysis ORDER BY status")) {
-        for (String status : new String[] {"COMPLETED", "FAILED", "PENDING"}) {
+        for (String status : new String[] {"COMPLETED", "CREATED", "FAILED"}) {
           assertTrue(rows.next());
           assertEquals(status, rows.getString("status"));
           assertEquals(0, rows.getLong("version"));
-          assertEquals(status.equals("PENDING") ? 0 : 100, rows.getInt("progress"));
+          assertEquals(status.equals("CREATED") ? 0 : 100, rows.getInt("progress"));
           assertNull(rows.getObject("started_at"));
           assertNull(rows.getObject("failed_at"));
           assertNull(rows.getString("error_code"));
@@ -55,6 +55,22 @@ class AnalysisMigrationTest {
         }
         assertFalse(rows.next());
       }
+      statement.executeUpdate(
+          "INSERT INTO product(id,candidate) VALUES ('00000000-0000-0000-0000-000000000001','{}'),('00000000-0000-0000-0000-000000000002','{}')");
+      statement.executeUpdate(
+          "INSERT INTO product_match(id,analysis_id,product_id,score,selected,position) SELECT gen_random_uuid(),id,'00000000-0000-0000-0000-000000000001','{}',true,0 FROM analysis WHERE status='COMPLETED'");
+      assertThrows(
+          SQLException.class,
+          () ->
+              statement.executeUpdate(
+                  "INSERT INTO product_match(id,analysis_id,product_id,score,selected,position) SELECT gen_random_uuid(),id,'00000000-0000-0000-0000-000000000002','{}',true,1 FROM analysis WHERE status='COMPLETED'"));
+      statement.executeUpdate(
+          "INSERT INTO product_match(id,analysis_id,product_id,score,selected,position) SELECT gen_random_uuid(),id,'00000000-0000-0000-0000-000000000002','{}',false,1 FROM analysis WHERE status='COMPLETED'");
+      assertThrows(
+          SQLException.class,
+          () ->
+              statement.executeUpdate(
+                  "INSERT INTO price_evidence(id,analysis_id,quote) SELECT gen_random_uuid(),id,'{}' FROM analysis WHERE status='COMPLETED'"));
       assertThrows(
           SQLException.class, () -> statement.executeUpdate("UPDATE analysis SET progress = 101"));
       assertThrows(
